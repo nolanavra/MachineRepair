@@ -30,6 +30,13 @@ namespace MachineRepair
         [SerializeField] private float arrowScrollSpeed = 1.25f;
         [SerializeField] private Vector2 pipeDirection = Vector2.right;
 
+        [Header("Leaks")]
+        [Tooltip("Sprite rendered where a leaking pipe cell is detected.")]
+        [SerializeField] private SpriteRenderer leakSpritePrefab;
+        [SerializeField] private Transform leakParent;
+        [SerializeField] private float leakGrowthSpeed = 0.5f;
+        [SerializeField] private float leakMaxScale = 1.2f;
+
         [Header("Visuals")]
         [SerializeField] private Color activeColor = new Color(0.18f, 0.58f, 0.32f);
         [SerializeField] private Color inactiveColor = new Color(0.4f, 0.4f, 0.4f);
@@ -37,6 +44,9 @@ namespace MachineRepair
         private readonly List<SpriteRenderer> arrowPool = new();
         private readonly List<Vector3> arrowBasePositions = new();
         private int activeArrowCount;
+        private readonly Dictionary<Vector2Int, SpriteRenderer> activeLeaks = new();
+        private readonly Dictionary<Vector2Int, float> leakScaleByCell = new();
+        private readonly Stack<SpriteRenderer> leakPool = new();
         private bool waterActive;
         private bool isSimulationMode;
 
@@ -62,6 +72,12 @@ namespace MachineRepair
                 var go = new GameObject("PipeArrows");
                 pipeArrowParent = go.transform;
             }
+
+            if (leakParent == null)
+            {
+                var leakGo = new GameObject("Leaks");
+                leakParent = leakGo.transform;
+            }
         }
 
         private void OnEnable()
@@ -74,6 +90,7 @@ namespace MachineRepair
                 simulationManager.SimulationStepCompleted += OnSimulationStepCompleted;
                 simulationManager.PowerToggled += OnPowerToggled;
                 simulationManager.WaterToggled += OnWaterToggled;
+                simulationManager.LeaksUpdated += OnLeaksUpdated;
                 waterActive = simulationManager.WaterOn;
             }
 
@@ -97,6 +114,7 @@ namespace MachineRepair
                 simulationManager.SimulationStepCompleted -= OnSimulationStepCompleted;
                 simulationManager.PowerToggled -= OnPowerToggled;
                 simulationManager.WaterToggled -= OnWaterToggled;
+                simulationManager.LeaksUpdated -= OnLeaksUpdated;
             }
 
             if (gameModeManager != null)
@@ -105,6 +123,7 @@ namespace MachineRepair
             }
 
             ClearArrowVisibility();
+            ClearLeaks();
         }
 
         private void OnPowerClicked()
@@ -133,6 +152,7 @@ namespace MachineRepair
             waterActive = state;
             UpdateStatus();
             UpdateArrowVisibility();
+            UpdateLeakVisibility();
         }
 
         private void UpdateStatus()
@@ -156,12 +176,14 @@ namespace MachineRepair
         private void Update()
         {
             AnimateArrows();
+            AnimateLeaks();
         }
 
         public void OnEnterMode(GameMode newMode)
         {
             isSimulationMode = newMode == GameMode.Simulation;
             UpdateArrowVisibility();
+            UpdateLeakVisibility();
         }
 
         public void OnExitMode(GameMode oldMode)
@@ -170,6 +192,7 @@ namespace MachineRepair
             {
                 isSimulationMode = false;
                 UpdateArrowVisibility();
+                UpdateLeakVisibility();
             }
         }
 
@@ -177,6 +200,11 @@ namespace MachineRepair
         {
             UpdateStatus();
             RefreshPipeArrows();
+        }
+
+        private void OnLeaksUpdated(IReadOnlyList<SimulationManager.LeakInfo> leaks)
+        {
+            SyncLeaks(leaks);
         }
 
         private void RefreshPipeArrows()
@@ -279,5 +307,118 @@ namespace MachineRepair
         }
 
         private bool ShouldShowArrows() => waterActive && isSimulationMode;
+
+        private void SyncLeaks(IReadOnlyList<SimulationManager.LeakInfo> leaks)
+        {
+            if (gridManager == null || leakSpritePrefab == null)
+            {
+                ClearLeaks();
+                return;
+            }
+
+            var desired = new HashSet<Vector2Int>();
+
+            foreach (var leak in leaks)
+            {
+                desired.Add(leak.Cell);
+                if (!activeLeaks.TryGetValue(leak.Cell, out var renderer) || renderer == null)
+                {
+                    renderer = GetLeakRenderer();
+                    activeLeaks[leak.Cell] = renderer;
+                    leakScaleByCell[leak.Cell] = 0f;
+                }
+
+                renderer.transform.position = leak.WorldPosition;
+                renderer.transform.localScale = Vector3.zero;
+                renderer.enabled = ShouldShowLeaks();
+            }
+
+            var toRemove = new List<Vector2Int>();
+            foreach (var kvp in activeLeaks)
+            {
+                if (!desired.Contains(kvp.Key))
+                {
+                    toRemove.Add(kvp.Key);
+                }
+            }
+
+            foreach (var cell in toRemove)
+            {
+                ReleaseLeak(cell);
+            }
+        }
+
+        private void AnimateLeaks()
+        {
+            if (!ShouldShowLeaks())
+            {
+                UpdateLeakVisibility();
+                return;
+            }
+
+            foreach (var kvp in activeLeaks)
+            {
+                var cell = kvp.Key;
+                var renderer = kvp.Value;
+                if (renderer == null) continue;
+
+                float currentScale = leakScaleByCell.TryGetValue(cell, out var scale) ? scale : 0f;
+                currentScale = Mathf.MoveTowards(currentScale, leakMaxScale, leakGrowthSpeed * Time.deltaTime);
+                leakScaleByCell[cell] = currentScale;
+
+                renderer.transform.localScale = new Vector3(currentScale, currentScale, 1f);
+                renderer.enabled = true;
+            }
+        }
+
+        private SpriteRenderer GetLeakRenderer()
+        {
+            if (leakPool.Count > 0)
+            {
+                var pooled = leakPool.Pop();
+                pooled.gameObject.SetActive(true);
+                return pooled;
+            }
+
+            var instance = Instantiate(leakSpritePrefab, leakParent);
+            instance.enabled = false;
+            return instance;
+        }
+
+        private void ReleaseLeak(Vector2Int cell)
+        {
+            if (!activeLeaks.TryGetValue(cell, out var renderer)) return;
+
+            renderer.enabled = false;
+            renderer.transform.localScale = Vector3.zero;
+            renderer.gameObject.SetActive(false);
+            leakPool.Push(renderer);
+
+            activeLeaks.Remove(cell);
+            leakScaleByCell.Remove(cell);
+        }
+
+        private void ClearLeaks()
+        {
+            foreach (var cell in new List<Vector2Int>(activeLeaks.Keys))
+            {
+                ReleaseLeak(cell);
+            }
+        }
+
+        private void UpdateLeakVisibility()
+        {
+            bool show = ShouldShowLeaks();
+
+            foreach (var kvp in activeLeaks)
+            {
+                if (kvp.Value != null)
+                {
+                    kvp.Value.enabled = show;
+                }
+            }
+        }
+
+        private bool ShouldShowLeaks() => waterActive && isSimulationMode;
     }
 }
