@@ -25,6 +25,8 @@ namespace MachineRepair
         [Tooltip("Toggle hydraulic propagation on/off.")]
         [SerializeField] private bool waterOn = true;
 
+        public bool WaterOn => waterOn;
+
         private float stepTimer;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
