@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using MachineRepair.Grid;
 
@@ -21,6 +22,17 @@ namespace MachineRepair
         [SerializeField] private float stepInterval = 0.1f;
 
         private float stepTimer;
+
+        // Graph buffers (per cell) for electrical, hydraulic, and signal states.
+        private float[] voltageGraph;
+        private float[] currentGraph;
+        private float[] pressureGraph;
+        private float[] flowGraph;
+        private bool[] signalGraph;
+
+        private readonly List<string> faultLog = new();
+
+        public SimulationSnapshot? LastSnapshot { get; private set; }
 
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
@@ -76,8 +88,6 @@ namespace MachineRepair
             UpdateComponentBehaviors();
             DetectFaults();
             EmitSimulationSnapshot();
-
-            SimulationStepCompleted?.Invoke();
         }
 
         public void OnEnterMode(GameMode newMode)
@@ -98,37 +108,183 @@ namespace MachineRepair
 
         private void BuildGraphs()
         {
-            // TODO: assemble electrical, hydraulic, and signal graphs from grid contents.
+            if (grid == null) return;
+
+            int cellCount = grid.CellCount;
+            EnsureGraph(ref voltageGraph, cellCount);
+            EnsureGraph(ref currentGraph, cellCount);
+            EnsureGraph(ref pressureGraph, cellCount);
+            EnsureGraph(ref flowGraph, cellCount);
+            EnsureGraph(ref signalGraph, cellCount);
+
+            faultLog.Clear();
         }
 
         private void PropagateVoltageCurrent()
         {
-            // TODO: propagate voltage and current along electrical graph using component behaviors.
+            if (grid == null || voltageGraph == null || currentGraph == null) return;
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null || cell.component.def == null) continue;
+
+                    if (cell.component.def.type != ComponentType.ChassisPowerConnection) continue;
+
+                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
+                    int idx = grid.ToIndex(cell.component.anchorCell);
+
+                    float supplyVoltage = Mathf.Max(cell.component.def.maxACVoltage, cell.component.def.maxDCVoltage);
+                    float supplyCurrent = supplyVoltage > 0f && cell.component.def.wattage > 0f
+                        ? cell.component.def.wattage / supplyVoltage
+                        : 0f;
+
+                    voltageGraph[idx] = supplyVoltage;
+                    currentGraph[idx] = supplyCurrent;
+                }
+            }
         }
 
         private void PropagatePressureFlow()
         {
-            // TODO: propagate pressure and flow along hydraulic graph using component behaviors.
+            if (grid == null || pressureGraph == null || flowGraph == null) return;
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null || cell.component.def == null) continue;
+
+                    if (cell.component.def.type != ComponentType.ChassisWaterConnection) continue;
+
+                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
+                    int idx = grid.ToIndex(cell.component.anchorCell);
+
+                    pressureGraph[idx] = cell.component.def.maxPressure;
+                    flowGraph[idx] = Mathf.Max(0f, cell.component.def.flowCoef);
+                }
+            }
         }
 
         private void EvaluateSignalStates()
         {
-            // TODO: compute digital/logic signal states along signal graph.
+            if (signalGraph == null || voltageGraph == null) return;
+
+            for (int i = 0; i < signalGraph.Length; i++)
+            {
+                signalGraph[i] = voltageGraph[i] > 0.01f;
+            }
         }
 
         private void UpdateComponentBehaviors()
         {
-            // TODO: run per-component behavior updates based on propagated values.
+            if (grid == null || voltageGraph == null) return;
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null || cell.component.def == null) continue;
+
+                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
+                    int idx = grid.ToIndex(cell.component.anchorCell);
+
+                    // For now, mirror propagated electrical values into any wires located in the same cell.
+                    if (cell.HasWire)
+                    {
+                        cell.wire.voltage = voltageGraph[idx];
+                        cell.wire.current = currentGraph[idx];
+                    }
+                }
+            }
         }
 
         private void DetectFaults()
         {
-            // TODO: inspect components/connectors for fault conditions and log them.
+            if (grid == null || voltageGraph == null) return;
+
+            faultLog.Clear();
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component != null && cell.component.def != null)
+                    {
+                        int idx = grid.ToIndex(cell.component.anchorCell);
+                        if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
+
+                        if (cell.component.def.requiresPower && voltageGraph[idx] <= 0f)
+                        {
+                            faultLog.Add($"{cell.component.def.displayName} lacks power at {cell.component.anchorCell}");
+                        }
+                    }
+
+                    if (cell.HasWire && cell.wire.EvaluateDamage(maxCurrent: 20f, maxResistance: 10f))
+                    {
+                        faultLog.Add($"Wire damaged near {x},{y}");
+                    }
+                }
+            }
         }
 
         private void EmitSimulationSnapshot()
         {
-            // TODO: notify debug/inspector UI with the latest simulation values.
+            if (voltageGraph == null || currentGraph == null || pressureGraph == null || flowGraph == null || signalGraph == null)
+            {
+                return;
+            }
+
+            LastSnapshot = new SimulationSnapshot
+            {
+                Voltage = (float[])voltageGraph.Clone(),
+                Current = (float[])currentGraph.Clone(),
+                Pressure = (float[])pressureGraph.Clone(),
+                Flow = (float[])flowGraph.Clone(),
+                Signals = (bool[])signalGraph.Clone(),
+                Faults = new List<string>(faultLog)
+            };
+
+            SimulationStepCompleted?.Invoke();
+        }
+
+        private static void EnsureGraph(ref float[] graph, int size)
+        {
+            if (graph == null || graph.Length != size)
+            {
+                graph = new float[size];
+            }
+            else
+            {
+                System.Array.Clear(graph, 0, graph.Length);
+            }
+        }
+
+        private static void EnsureGraph(ref bool[] graph, int size)
+        {
+            if (graph == null || graph.Length != size)
+            {
+                graph = new bool[size];
+            }
+            else
+            {
+                System.Array.Clear(graph, 0, graph.Length);
+            }
+        }
+
+        public struct SimulationSnapshot
+        {
+            public float[] Voltage;
+            public float[] Current;
+            public float[] Pressure;
+            public float[] Flow;
+            public bool[] Signals;
+            public IReadOnlyList<string> Faults;
         }
     }
 }
