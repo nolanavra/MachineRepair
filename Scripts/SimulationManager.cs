@@ -34,6 +34,8 @@ namespace MachineRepair
         private float[] flowGraph;
         private bool[] signalGraph;
 
+        private readonly List<LeakInfo> detectedLeaks = new();
+
         private readonly List<string> faultLog = new();
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
@@ -47,6 +49,7 @@ namespace MachineRepair
         public event Action SimulationStepCompleted;
         public event Action<bool> PowerToggled;
         public event Action<bool> WaterToggled;
+        public event Action<IReadOnlyList<LeakInfo>> LeaksUpdated;
 
         private void Awake()
         {
@@ -183,24 +186,100 @@ namespace MachineRepair
 
         private void PropagatePressureFlow()
         {
-            if (grid == null || pressureGraph == null || flowGraph == null) return;
+            detectedLeaks.Clear();
+
+            if (grid == null || pressureGraph == null || flowGraph == null)
+            {
+                NotifyLeakListeners();
+                return;
+            }
+
+            if (!waterOn)
+            {
+                NotifyLeakListeners();
+                return;
+            }
+
+            var waterPorts = new HashSet<Vector2Int>();
+            CollectWaterPorts(waterPorts);
+
+            var visited = new HashSet<int>();
+            var queue = new Queue<Vector2Int>();
 
             for (int y = 0; y < grid.height; y++)
             {
                 for (int x = 0; x < grid.width; x++)
                 {
                     var cell = grid.GetCell(new Vector2Int(x, y));
-                    if (cell.component == null || cell.component.def == null) continue;
-
-                    if (cell.component.def.type != ComponentType.ChassisWaterConnection) continue;
+                    if (!IsWaterSupplyComponent(cell)) continue;
 
                     if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
                     int idx = grid.ToIndex(cell.component.anchorCell);
 
                     pressureGraph[idx] = cell.component.def.maxPressure;
                     flowGraph[idx] = Mathf.Max(0f, cell.component.def.flowCoef);
+
+                    if (visited.Add(idx))
+                    {
+                        queue.Enqueue(cell.component.anchorCell);
+                    }
                 }
             }
+
+            while (queue.Count > 0)
+            {
+                var cellPos = queue.Dequeue();
+                int idx = grid.ToIndex(cellPos);
+
+                float pressure = pressureGraph[idx];
+                float flow = flowGraph[idx];
+                if (pressure <= 0f && flow <= 0f) continue;
+
+                var cell = grid.GetCell(cellPos);
+                bool traversable = cell.HasPipe || IsWaterSupplyComponent(cell) || IsWaterPortCell(cellPos, waterPorts);
+                if (!traversable) continue;
+
+                for (int dir = 0; dir < 4; dir++)
+                {
+                    Vector2Int neighbor = dir switch
+                    {
+                        0 => new Vector2Int(cellPos.x + 1, cellPos.y),
+                        1 => new Vector2Int(cellPos.x - 1, cellPos.y),
+                        2 => new Vector2Int(cellPos.x, cellPos.y + 1),
+                        _ => new Vector2Int(cellPos.x, cellPos.y - 1)
+                    };
+
+                    if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
+
+                    var neighborCell = grid.GetCell(neighbor);
+                    bool acceptsWater = neighborCell.HasPipe || IsWaterPortCell(neighbor, waterPorts) || IsWaterSupplyComponent(neighborCell);
+                    if (!acceptsWater) continue;
+
+                    int nIdx = grid.ToIndex(neighbor);
+                    if (pressure > pressureGraph[nIdx]) pressureGraph[nIdx] = pressure;
+                    if (flow > flowGraph[nIdx]) flowGraph[nIdx] = flow;
+
+                    if (visited.Add(nIdx))
+                    {
+                        queue.Enqueue(neighbor);
+                    }
+                }
+
+                if (cell.HasPipe && !IsWaterPortCell(cellPos, waterPorts))
+                {
+                    int connections = CountWaterConnections(cellPos, waterPorts);
+                    if (connections <= 1)
+                    {
+                        detectedLeaks.Add(new LeakInfo
+                        {
+                            Cell = cellPos,
+                            WorldPosition = grid.CellToWorld(cellPos)
+                        });
+                    }
+                }
+            }
+
+            NotifyLeakListeners();
         }
 
         private void EvaluateSignalStates()
@@ -287,6 +366,74 @@ namespace MachineRepair
             SimulationStepCompleted?.Invoke();
         }
 
+        private void CollectWaterPorts(HashSet<Vector2Int> waterPorts)
+        {
+            waterPorts.Clear();
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null || cell.component.portDef == null || cell.component.portDef.ports == null) continue;
+
+                    foreach (var port in cell.component.portDef.ports)
+                    {
+                        if (port.port != PortType.Water) continue;
+
+                        Vector2Int global = cell.component.GetGlobalCell(port);
+                        if (grid.InBounds(global.x, global.y))
+                        {
+                            waterPorts.Add(global);
+                        }
+                    }
+                }
+            }
+        }
+
+        private int CountWaterConnections(Vector2Int cellPos, HashSet<Vector2Int> waterPorts)
+        {
+            int connections = 0;
+
+            for (int dir = 0; dir < 4; dir++)
+            {
+                Vector2Int neighbor = dir switch
+                {
+                    0 => new Vector2Int(cellPos.x + 1, cellPos.y),
+                    1 => new Vector2Int(cellPos.x - 1, cellPos.y),
+                    2 => new Vector2Int(cellPos.x, cellPos.y + 1),
+                    _ => new Vector2Int(cellPos.x, cellPos.y - 1)
+                };
+
+                if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
+
+                var neighborCell = grid.GetCell(neighbor);
+                if (neighborCell.HasPipe || IsWaterSupplyComponent(neighborCell) || IsWaterPortCell(neighbor, waterPorts))
+                {
+                    connections++;
+                }
+            }
+
+            return connections;
+        }
+
+        private bool IsWaterSupplyComponent(cellDef cell)
+        {
+            return cell.component != null
+                && cell.component.def != null
+                && cell.component.def.type == ComponentType.ChassisWaterConnection;
+        }
+
+        private static bool IsWaterPortCell(Vector2Int cellPos, HashSet<Vector2Int> waterPorts)
+        {
+            return waterPorts.Contains(cellPos);
+        }
+
+        private void NotifyLeakListeners()
+        {
+            LeaksUpdated?.Invoke(detectedLeaks);
+        }
+
         private static void EnsureGraph(ref float[] graph, int size)
         {
             if (graph == null || graph.Length != size)
@@ -319,6 +466,12 @@ namespace MachineRepair
             public float[] Flow;
             public bool[] Signals;
             public IReadOnlyList<string> Faults;
+        }
+
+        public struct LeakInfo
+        {
+            public Vector2Int Cell;
+            public Vector3 WorldPosition;
         }
     }
 }
