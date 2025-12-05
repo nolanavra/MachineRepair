@@ -62,12 +62,12 @@ public class GameModeManager : MonoBehaviour
         var kb = Keyboard.current;
         if (kb == null) return;
 
-        // 1..5 map to modes (1=Component, 2=Wire, 3=Pipe, 4=Selection, 5=Simulation)
-        if (kb.digit1Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetMode(GameMode.ComponentPlacement);
-        if (kb.digit2Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetMode(GameMode.WirePlacement);
-        if (kb.digit3Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetMode(GameMode.PipePlacement);
-        if (kb.digit4Key.wasPressedThisFrame || kb.numpad4Key.wasPressedThisFrame) SetMode(GameMode.Selection);
-        if (kb.digit5Key.wasPressedThisFrame || kb.numpad5Key.wasPressedThisFrame) SetMode(GameMode.Simulation);
+        // 1..5 map to modes
+        if (kb.digit2Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetMode(GameMode.ComponentPlacement);
+        if (kb.digit3Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetMode(GameMode.WirePlacement);
+        if (kb.digit4Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetMode(GameMode.PipePlacement);
+        if (kb.digit5Key.wasPressedThisFrame || kb.numpad4Key.wasPressedThisFrame) SetMode(GameMode.Selection);
+        if (kb.digit1Key.wasPressedThisFrame || kb.numpad5Key.wasPressedThisFrame) SetMode(GameMode.Simulation);
 
         // Optional: quick toggle Simulation with Space (comment out if not desired)
         // if (kb.spaceKey.wasPressedThisFrame) ToggleSimulation();
@@ -138,7 +138,7 @@ public class GameModeManager : MonoBehaviour
 
     private void ForceAnnounceMode()
     {
-        // Inform listeners on Start even if we didnt change
+        // Inform listeners on Start even if we didn’t “change”
         for (int i = 0; i < _listeners.Count; i++)
             _listeners[i].OnEnterMode(CurrentMode);
 
