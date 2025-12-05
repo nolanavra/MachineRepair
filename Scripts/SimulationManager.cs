@@ -38,6 +38,9 @@ namespace MachineRepair
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
+        public bool PowerOn => powerOn;
+        public bool WaterOn => waterOn;
+
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
         /// </summary>
