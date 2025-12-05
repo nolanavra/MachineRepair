@@ -96,7 +96,8 @@ public class InspectorUI : MonoBehaviour
 
     private void PresentWire(InputRouter.SelectionInfo selection)
     {
-        string wireLabel = selection.cellData.wire != WireType.None ? $"{selection.cellData.wire} Wire" : "Wire";
+        WireType wireType = selection.cellData.wire != null ? selection.cellData.wire.wireType : WireType.None;
+        string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
         SetTitle(wireLabel);
         SetDescription("Carries electrical or signal connections between components.");
         SetConnections(BuildWireConnectionSummary(selection.cell));
