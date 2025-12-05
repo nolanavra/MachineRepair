@@ -20,6 +20,10 @@ namespace MachineRepair
         [SerializeField] private bool autorun = true;
         [Tooltip("Seconds between autorun steps.")]
         [SerializeField] private float stepInterval = 0.1f;
+        [Tooltip("Toggle electrical propagation on/off.")]
+        [SerializeField] private bool powerOn = true;
+        [Tooltip("Toggle hydraulic propagation on/off.")]
+        [SerializeField] private bool waterOn = true;
 
         private float stepTimer;
 
@@ -38,6 +42,8 @@ namespace MachineRepair
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
         /// </summary>
         public event Action SimulationStepCompleted;
+        public event Action<bool> PowerToggled;
+        public event Action<bool> WaterToggled;
 
         private void Awake()
         {
@@ -65,6 +71,13 @@ namespace MachineRepair
             if (!autorun) return;
             if (GameModeManager.Instance != null && GameModeManager.Instance.CurrentMode != GameMode.Simulation) return;
             if (grid == null) return;
+
+            bool anyEnabled = powerOn || waterOn;
+            if (!anyEnabled)
+            {
+                stepTimer = 0f;
+                return;
+            }
 
             stepTimer += Time.deltaTime;
             if (stepTimer < stepInterval) return;
@@ -104,6 +117,24 @@ namespace MachineRepair
             {
                 stepTimer = 0f;
             }
+        }
+
+        public void SetPower(bool enabled)
+        {
+            if (powerOn == enabled) return;
+
+            powerOn = enabled;
+            stepTimer = 0f;
+            PowerToggled?.Invoke(powerOn);
+        }
+
+        public void SetWater(bool enabled)
+        {
+            if (waterOn == enabled) return;
+
+            waterOn = enabled;
+            stepTimer = 0f;
+            WaterToggled?.Invoke(waterOn);
         }
 
         private void BuildGraphs()
