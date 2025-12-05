@@ -87,8 +87,13 @@ public static class Editor_CreateDefaultScene
 
         var gridUi = gridRoot.AddComponent(gridUiType);
         var serialized = new SerializedObject(gridUi);
-        serialized.FindProperty("gridManager")?.objectReferenceValue = gridManager;
-        serialized.FindProperty("tilemap")?.objectReferenceValue = tilemap;
+        var gridManagerProperty = serialized.FindProperty("gridManager");
+        if (gridManagerProperty != null)
+            gridManagerProperty.objectReferenceValue = gridManager;
+
+        var tilemapProperty = serialized.FindProperty("tilemap");
+        if (tilemapProperty != null)
+            tilemapProperty.objectReferenceValue = tilemap;
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
