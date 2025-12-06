@@ -4,10 +4,9 @@ using MachineRepair;
 using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.EventSystems;     // For UI-hit checks
-using UnityEngine.InputSystem;      // New Input System
 
 /// Centralizes input handling, keys, mouseclick  (left/right) and routes to per-mode handlers.
-/// Uses GameModeManager + GridManager. Uses New Input System (Mouse.current).
+/// Uses GameModeManager + GridManager. Uses legacy Input API.
 namespace MachineRepair.Grid
 {
     public class InputRouter : MonoBehaviour, IGameModeListener
@@ -105,8 +104,7 @@ namespace MachineRepair.Grid
 
         private void Update()
         {
-            var mouse = Mouse.current;
-            if (mouse == null || cam == null || grid == null) return;
+            if (!Input.mousePresent || cam == null || grid == null) return;
 
             if (blockWhenPointerOverUI && IsPointerOverUI()) return;
 
@@ -115,7 +113,7 @@ namespace MachineRepair.Grid
             if(highlightEnable)UpdateCellHighlight();
 
             // LEFT CLICK
-            if (mouse.leftButton.wasPressedThisFrame)
+            if (Input.GetMouseButtonDown(0))
             {
                 cellDef cell = GetMouseCell();
                 Vector2Int pos = GetMousePos();
@@ -124,7 +122,7 @@ namespace MachineRepair.Grid
             }
 
             // RIGHT CLICK
-            if (mouse.rightButton.wasPressedThisFrame)
+            if (Input.GetMouseButtonDown(1))
             {
                 cellDef cell = GetMouseCell();
                 Vector2Int pos = GetMousePos();
@@ -425,11 +423,7 @@ namespace MachineRepair.Grid
             Camera cam = Camera.main;
             if (cam == null) return default;
 
-            // With the new Input System, Mouse.current can be null (e.g., no mouse on device)
-            var mouse = Mouse.current;
-            if (mouse == null) return default;
-
-            Vector2 screenPos = mouse.position.ReadValue();
+            Vector3 screenPos = Input.mousePosition;
             Vector3 mouseWorld = cam.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, 0f));
             mouseWorld.z = 0f;
 
@@ -580,10 +574,7 @@ namespace MachineRepair.Grid
             if (GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
             if (currentPlacementDef == null) return;
 
-            var kb = Keyboard.current;
-            if (kb == null) return;
-
-            if (kb.rKey.wasPressedThisFrame)
+            if (Input.GetKeyDown(KeyCode.R))
             {
                 currentRotation = (currentRotation + 1) % 4;
             }

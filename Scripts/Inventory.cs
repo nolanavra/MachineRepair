@@ -2,7 +2,6 @@ using MachineRepair;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
 /// Drop this on a GameObject (e.g. "GameController").

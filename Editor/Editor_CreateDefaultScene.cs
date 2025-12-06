@@ -8,7 +8,6 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Tilemaps;
 using UnityEngine.UI;
 using TMPro;
-using UnityEngine.InputSystem.UI;
 using MachineRepair;
 using MachineRepair.Grid;
 
@@ -337,7 +336,7 @@ public static class Editor_CreateDefaultScene
         var eventSystemGO = new GameObject("EventSystem");
         SceneManager.MoveGameObjectToScene(eventSystemGO, scene);
         eventSystemGO.AddComponent<EventSystem>();
-        eventSystemGO.AddComponent<InputSystemUIInputModule>();
+        eventSystemGO.AddComponent<StandaloneInputModule>();
         return eventSystemGO;
     }
 

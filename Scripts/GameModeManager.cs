@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem; // New Input System
 
 public enum GameMode
 {
@@ -29,7 +28,7 @@ public class GameModeManager : MonoBehaviour
     [Header("Startup")]
     [SerializeField] private GameMode initialMode = GameMode.Selection;
 
-    [Header("Hotkeys (New Input System)")]
+    [Header("Hotkeys (Legacy Input)")]
     [Tooltip("Enable number-key hotkeys: 1=Component, 2=Wire, 3=Pipe, 4=Selection, 5=Simulation")]
     [SerializeField] private bool enableHotkeys = true;
 
@@ -59,18 +58,15 @@ public class GameModeManager : MonoBehaviour
     private void Update()
     {
         if (!enableHotkeys) return;
-        var kb = Keyboard.current;
-        if (kb == null) return;
-
         // 1..5 map to modes
-        if (kb.digit2Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetMode(GameMode.ComponentPlacement);
-        if (kb.digit3Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetMode(GameMode.WirePlacement);
-        if (kb.digit4Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetMode(GameMode.PipePlacement);
-        if (kb.digit5Key.wasPressedThisFrame || kb.numpad4Key.wasPressedThisFrame) SetMode(GameMode.Selection);
-        if (kb.digit1Key.wasPressedThisFrame || kb.numpad5Key.wasPressedThisFrame) SetMode(GameMode.Simulation);
+        if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad1)) SetMode(GameMode.ComponentPlacement);
+        if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad2)) SetMode(GameMode.WirePlacement);
+        if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad3)) SetMode(GameMode.PipePlacement);
+        if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad4)) SetMode(GameMode.Selection);
+        if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad5)) SetMode(GameMode.Simulation);
 
         // Optional: quick toggle Simulation with Space (comment out if not desired)
-        // if (kb.spaceKey.wasPressedThisFrame) ToggleSimulation();
+        // if (Input.GetKeyDown(KeyCode.Space)) ToggleSimulation();
     }
 
     public void RegisterListener(IGameModeListener listener)
@@ -138,7 +134,7 @@ public class GameModeManager : MonoBehaviour
 
     private void ForceAnnounceMode()
     {
-        // Inform listeners on Start even if we didn’t “change”
+        // Inform listeners on Start even if we didnt change
         for (int i = 0; i < _listeners.Count; i++)
             _listeners[i].OnEnterMode(CurrentMode);
 

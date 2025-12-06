@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using MachineRepair.Grid;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 /// <summary>
@@ -44,11 +43,7 @@ public class SimpleInventoryUI : MonoBehaviour
 
     private void Update()
     {
-        var kb = Keyboard.current;
-        if (kb == null) return;
-
-        // 1..5 map to modes
-        if (kb.iKey.wasPressedThisFrame) ShowHideInventory();
+        if (Input.GetKeyDown(KeyCode.I)) ShowHideInventory();
 
     }
 
