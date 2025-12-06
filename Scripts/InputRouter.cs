@@ -79,11 +79,15 @@ namespace MachineRepair.Grid
         [SerializeField] private string secondaryClickActionName = "SecondaryClick";
         [SerializeField] private string rotatePlacementActionName = "RotatePlacement";
 
+        [Header("Debugging")]
+        [SerializeField] private bool logInputEvents = false;
+
         private InputAction pointAction;
         private InputAction primaryClickAction;
         private InputAction secondaryClickAction;
         private InputAction rotatePlacementAction;
         private Vector2 pointerScreenPosition;
+        private Vector2 lastLoggedPointerScreenPosition = new Vector2(float.NaN, float.NaN);
 
         public SelectionInfo CurrentSelection { get; private set; }
 
@@ -129,7 +133,18 @@ namespace MachineRepair.Grid
             if (cam == null || grid == null) return;
 
             if (pointAction != null)
-                pointerScreenPosition = pointAction.ReadValue<Vector2>();
+            {
+                Vector2 newPointer = pointAction.ReadValue<Vector2>();
+                if (newPointer != pointerScreenPosition)
+                {
+                    pointerScreenPosition = newPointer;
+                    MaybeLogPointerChange(pointerScreenPosition);
+                }
+                else
+                {
+                    pointerScreenPosition = newPointer;
+                }
+            }
 
             if (blockWhenPointerOverUI && IsPointerOverUI()) return;
 
@@ -881,6 +896,7 @@ namespace MachineRepair.Grid
         private void OnPointPerformed(InputAction.CallbackContext ctx)
         {
             pointerScreenPosition = ctx.ReadValue<Vector2>();
+            MaybeLogPointerChange(pointerScreenPosition);
         }
 
         private bool CanProcessPointerInput()
@@ -897,7 +913,10 @@ namespace MachineRepair.Grid
             cellDef cell = GetMouseCell();
             Vector2Int pos = GetMousePos();
             if (grid.InBounds(pos.x, pos.y))
+            {
+                LogInputEvent($"Primary click at {pos} in mode {GameModeManager.Instance?.CurrentMode.ToString() ?? "(no mode)"}");
                 RouteLeftClick(cell, pos);
+            }
         }
 
         private void OnSecondaryClickPerformed(InputAction.CallbackContext ctx)
@@ -907,13 +926,43 @@ namespace MachineRepair.Grid
             cellDef cell = GetMouseCell();
             Vector2Int pos = GetMousePos();
             if (grid.InBounds(pos.x, pos.y))
+            {
+                LogInputEvent($"Secondary click at {pos} in mode {GameModeManager.Instance?.CurrentMode.ToString() ?? "(no mode)"}");
                 RouteRightClick(cell, pos);
+            }
         }
 
         private void OnRotatePlacementPerformed(InputAction.CallbackContext ctx)
         {
             if (!ctx.performed) return;
             HandlePlacementRotation();
+            LogInputEvent($"Rotate placement input; new rotation index {currentRotation}");
+        }
+
+        private void MaybeLogPointerChange(Vector2 screenPosition)
+        {
+            if (!logInputEvents) return;
+            if (screenPosition == lastLoggedPointerScreenPosition) return;
+
+            lastLoggedPointerScreenPosition = screenPosition;
+
+            string gridPos = cam != null ? ScreenToGrid(screenPosition).ToString() : "(no camera)";
+            LogInputEvent($"Pointer moved to screen {screenPosition} (grid {gridPos})");
+        }
+
+        private Vector2Int ScreenToGrid(Vector2 screenPosition)
+        {
+            if (cam == null) return Vector2Int.zero;
+
+            Vector3 world = cam.ScreenToWorldPoint(new Vector3(screenPosition.x, screenPosition.y, 0f));
+            world.z = 0f;
+            return new Vector2Int(Mathf.FloorToInt(world.x), Mathf.FloorToInt(world.y));
+        }
+
+        private void LogInputEvent(string message)
+        {
+            if (!logInputEvents) return;
+            Debug.Log($"[InputRouter] {message}");
         }
         #endregion
     }
