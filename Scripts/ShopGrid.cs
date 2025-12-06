@@ -1,4 +1,5 @@
-﻿using MachineRepair.Grid;
+﻿using MachineRepair;
+using MachineRepair.Grid;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -36,6 +37,12 @@ namespace MachineRepair.Grid
 
         [Header("Tilemap to query")]
         [SerializeField] private Tilemap tilemap;
+
+        [Header("Component Placement from Tilemap")]
+        [SerializeField] private Tilemap componentTilemap;
+        [SerializeField] private ThingDef chassisPowerConnectionDef;
+        [SerializeField] private ThingDef chassisWaterConnectionDef;
+        [SerializeField] private GameObject componentPrefab;
 
         public int CellCount => width * height;
         public bool setup = false;
@@ -118,7 +125,72 @@ namespace MachineRepair.Grid
                     placeability = placeability
                 };
             }
+
+            PlaceComponentsFromTilemap();
             UpdateSubGrid();
+        }
+
+        private void PlaceComponentsFromTilemap()
+        {
+            if (componentTilemap == null) return;
+
+            foreach (var pos in componentTilemap.cellBounds.allPositionsWithin)
+            {
+                var cellPos = new Vector3Int(pos.x, pos.y, 0);
+                if (!componentTilemap.HasTile(cellPos)) continue;
+
+                var tile = componentTilemap.GetTile(cellPos);
+                if (tile == null || string.IsNullOrWhiteSpace(tile.name)) continue;
+
+                Vector2Int gridCell = new Vector2Int(cellPos.x, cellPos.y);
+                if (!InBounds(gridCell.x, gridCell.y)) continue;
+
+                ThingDef def = tile.name switch
+                {
+                    nameof(ComponentType.ChassisPowerConnection) => chassisPowerConnectionDef,
+                    nameof(ComponentType.ChassisWaterConnection) => chassisWaterConnectionDef,
+                    _ => null
+                };
+
+                if (def == null) continue;
+
+                var component = CreateComponentInstance(def, gridCell);
+                TryPlaceComponent(gridCell, component);
+            }
+        }
+
+        private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell)
+        {
+            GameObject instance = componentPrefab != null
+                ? Instantiate(componentPrefab)
+                : new GameObject(def.displayName ?? def.defName ?? "MachineComponent");
+
+            instance.name = def.displayName ?? def.defName ?? instance.name;
+
+            var machine = instance.GetComponent<MachineComponent>();
+            if (machine == null)
+                machine = instance.AddComponent<MachineComponent>();
+
+            machine.def = def;
+            machine.grid = this;
+            machine.footprint = def.footprint;
+            machine.rotation = 0;
+            machine.anchorCell = anchorCell;
+            machine.portDef = def.connectionPorts;
+
+            instance.transform.position = CellToWorld(anchorCell);
+            instance.transform.rotation = Quaternion.identity;
+            instance.transform.localScale = Vector3.one * def.placedSpriteScale;
+
+            var spriteRenderer = instance.GetComponent<SpriteRenderer>();
+            if (spriteRenderer == null)
+                spriteRenderer = instance.AddComponent<SpriteRenderer>();
+
+            spriteRenderer.sprite = def.sprite;
+            spriteRenderer.color = Color.white;
+            spriteRenderer.sortingOrder = def.placedSortingOrder;
+
+            return machine;
         }
 
         public void UpdateSubGrid()
