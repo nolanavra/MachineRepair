@@ -13,7 +13,7 @@ namespace MachineRepair.Grid
     public class InputRouter : MonoBehaviour, IGameModeListener
     {
         
-            public enum CellSelectionTarget
+        public enum CellSelectionTarget
         {
             None,
             Component,
@@ -800,10 +800,7 @@ namespace MachineRepair.Grid
         }
         #endregion
 
-    }
-}
-
-
+        #region Input Actions
         private void CacheInputActions()
         {
             if (playerInput == null || playerInput.actions == null)
@@ -918,4 +915,7 @@ namespace MachineRepair.Grid
             if (!ctx.performed) return;
             HandlePlacementRotation();
         }
+        #endregion
+    }
+}
 
