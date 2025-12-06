@@ -145,6 +145,15 @@ namespace MachineRepair.Grid
 
         private cellDef BuildCellDef(int index)
         {
+            if (terrainByIndex == null || occupancyByIndex == null || index < 0 || index >= CellCount)
+            {
+                return new cellDef
+                {
+                    index = index,
+                    placeability = CellPlaceability.Blocked
+                };
+            }
+
             return cellDef.From(terrainByIndex[index], occupancyByIndex[index]);
         }
 
