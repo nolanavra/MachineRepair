@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem;
 using MachineRepair.Grid;
 
 namespace MachineRepair
@@ -164,10 +163,7 @@ namespace MachineRepair
         {
             if (activePreview == null || !startCell.HasValue) return;
 
-            var mouse = Mouse.current;
-            if (mouse == null) return;
-
-            Vector2 screenPos = mouse.position.ReadValue();
+            Vector3 screenPos = Input.mousePosition;
             Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, Mathf.Abs(previewZOffset)));
             worldPos.z = previewZOffset;
 
