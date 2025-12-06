@@ -34,6 +34,9 @@ namespace MachineRepair
         [SerializeField] private WireType wireType = WireType.AC;
         [SerializeField] private float previewZOffset = -0.1f;
         [SerializeField] private float lineWidth = 0.05f;
+        [SerializeField] private PlayerInput playerInput;
+        [SerializeField] private string gameplayMapName = "Gameplay";
+        [SerializeField] private string pointActionName = "Point";
 
         [Header("Simulation")]
         [SerializeField] private float defaultWireResistance = 1f;
@@ -46,11 +49,16 @@ namespace MachineRepair
         private readonly List<WireConnectionInfo> connections = new();
         private readonly Dictionary<Vector2Int, WireConnectionInfo> connectionByCell = new();
         private Vector2Int? startCell;
+        private InputAction pointAction;
+        private Vector2 pointerScreenPosition;
 
         private void Awake()
         {
             cam = cameraOverride != null ? cameraOverride : Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
+
+            if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
+            CacheInputActions();
 
             if (cam == null)
             {
@@ -61,6 +69,18 @@ namespace MachineRepair
             {
                 Debug.LogError("WirePlacementTool requires a GridManager in the scene.");
             }
+        }
+
+        private void OnEnable()
+        {
+            CacheInputActions();
+            EnableInput();
+        }
+
+        private void OnDisable()
+        {
+            DisableInput();
+            CancelPreview();
         }
 
         private void Update()
@@ -164,14 +184,48 @@ namespace MachineRepair
         {
             if (activePreview == null || !startCell.HasValue) return;
 
-            var mouse = Mouse.current;
-            if (mouse == null) return;
+            if (pointAction != null)
+                pointerScreenPosition = pointAction.ReadValue<Vector2>();
 
-            Vector2 screenPos = mouse.position.ReadValue();
-            Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, Mathf.Abs(previewZOffset)));
+            Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(pointerScreenPosition.x, pointerScreenPosition.y, Mathf.Abs(previewZOffset)));
             worldPos.z = previewZOffset;
 
             activePreview.SetPosition(1, worldPos);
+        }
+
+        private void CacheInputActions()
+        {
+            if (playerInput == null || playerInput.actions == null) return;
+
+            var map = playerInput.actions.FindActionMap(gameplayMapName, throwIfNotFound: false);
+            if (map == null) return;
+
+            pointAction = map.FindAction(pointActionName, throwIfNotFound: false);
+        }
+
+        private void EnableInput()
+        {
+            if (pointAction != null)
+            {
+                pointAction.performed += OnPointPerformed;
+                pointAction.canceled += OnPointPerformed;
+                pointAction.Enable();
+            }
+        }
+
+        private void DisableInput()
+        {
+            if (pointAction != null)
+            {
+                pointAction.performed -= OnPointPerformed;
+                pointAction.canceled -= OnPointPerformed;
+                pointAction.Disable();
+            }
+        }
+
+        private void OnPointPerformed(InputAction.CallbackContext ctx)
+        {
+            pointerScreenPosition = ctx.ReadValue<Vector2>();
         }
 
         private void EnsurePreview()

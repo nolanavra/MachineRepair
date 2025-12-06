@@ -30,14 +30,25 @@ public class GameModeManager : MonoBehaviour
     [SerializeField] private GameMode initialMode = GameMode.Selection;
 
     [Header("Hotkeys (New Input System)")]
-    [Tooltip("Enable number-key hotkeys: 1=Component, 2=Wire, 3=Pipe, 4=Selection, 5=Simulation")]
-    [SerializeField] private bool enableHotkeys = true;
+    [Tooltip("PlayerInput action map name containing mode selection bindings.")]
+    [SerializeField] private string gameplayMapName = "Gameplay";
+    [SerializeField] private PlayerInput playerInput;
+    [SerializeField] private string componentPlacementActionName = "ModeComponentPlacement";
+    [SerializeField] private string wirePlacementActionName = "ModeWirePlacement";
+    [SerializeField] private string pipePlacementActionName = "ModePipePlacement";
+    [SerializeField] private string selectionActionName = "ModeSelection";
+    [SerializeField] private string simulationActionName = "ModeSimulation";
 
     public GameMode CurrentMode { get; private set; }
 
     public event Action<GameMode, GameMode> OnModeChanged; // (old,new)
 
     private readonly List<IGameModeListener> _listeners = new();
+    private InputAction componentPlacementAction;
+    private InputAction wirePlacementAction;
+    private InputAction pipePlacementAction;
+    private InputAction selectionAction;
+    private InputAction simulationAction;
 
     private void Awake()
     {
@@ -49,28 +60,23 @@ public class GameModeManager : MonoBehaviour
         Instance = this;
     }
 
+    private void OnEnable()
+    {
+        if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
+        CacheModeActions();
+        EnableModeActions();
+    }
+
+    private void OnDisable()
+    {
+        DisableModeActions();
+    }
+
     private void Start()
     {
         SetMode(initialMode, fireEvents: false); // set silently at boot
         // Now announce so UI & systems can initialize cleanly
         ForceAnnounceMode();
-    }
-
-    private void Update()
-    {
-        if (!enableHotkeys) return;
-        var kb = Keyboard.current;
-        if (kb == null) return;
-
-        // 1..5 map to modes
-        if (kb.digit2Key.wasPressedThisFrame || kb.numpad1Key.wasPressedThisFrame) SetMode(GameMode.ComponentPlacement);
-        if (kb.digit3Key.wasPressedThisFrame || kb.numpad2Key.wasPressedThisFrame) SetMode(GameMode.WirePlacement);
-        if (kb.digit4Key.wasPressedThisFrame || kb.numpad3Key.wasPressedThisFrame) SetMode(GameMode.PipePlacement);
-        if (kb.digit5Key.wasPressedThisFrame || kb.numpad4Key.wasPressedThisFrame) SetMode(GameMode.Selection);
-        if (kb.digit1Key.wasPressedThisFrame || kb.numpad5Key.wasPressedThisFrame) SetMode(GameMode.Simulation);
-
-        // Optional: quick toggle Simulation with Space (comment out if not desired)
-        // if (kb.spaceKey.wasPressedThisFrame) ToggleSimulation();
     }
 
     public void RegisterListener(IGameModeListener listener)
@@ -138,7 +144,7 @@ public class GameModeManager : MonoBehaviour
 
     private void ForceAnnounceMode()
     {
-        // Inform listeners on Start even if we didn’t “change”
+        // Inform listeners on Start even if we didnt change
         for (int i = 0; i < _listeners.Count; i++)
             _listeners[i].OnEnterMode(CurrentMode);
 
@@ -146,6 +152,113 @@ public class GameModeManager : MonoBehaviour
         Debug.Log("AnnounceMode");
     }
 
+    private void CacheModeActions()
+    {
+        if (playerInput == null || playerInput.actions == null) return;
 
+        var map = playerInput.actions.FindActionMap(gameplayMapName, throwIfNotFound: false);
+        if (map == null) return;
+
+        componentPlacementAction = map.FindAction(componentPlacementActionName, throwIfNotFound: false);
+        wirePlacementAction = map.FindAction(wirePlacementActionName, throwIfNotFound: false);
+        pipePlacementAction = map.FindAction(pipePlacementActionName, throwIfNotFound: false);
+        selectionAction = map.FindAction(selectionActionName, throwIfNotFound: false);
+        simulationAction = map.FindAction(simulationActionName, throwIfNotFound: false);
+    }
+
+    private void EnableModeActions()
+    {
+        if (componentPlacementAction != null)
+        {
+            componentPlacementAction.performed += OnComponentPlacementPerformed;
+            componentPlacementAction.Enable();
+        }
+
+        if (wirePlacementAction != null)
+        {
+            wirePlacementAction.performed += OnWirePlacementPerformed;
+            wirePlacementAction.Enable();
+        }
+
+        if (pipePlacementAction != null)
+        {
+            pipePlacementAction.performed += OnPipePlacementPerformed;
+            pipePlacementAction.Enable();
+        }
+
+        if (selectionAction != null)
+        {
+            selectionAction.performed += OnSelectionPerformed;
+            selectionAction.Enable();
+        }
+
+        if (simulationAction != null)
+        {
+            simulationAction.performed += OnSimulationPerformed;
+            simulationAction.Enable();
+        }
+    }
+
+    private void DisableModeActions()
+    {
+        if (componentPlacementAction != null)
+        {
+            componentPlacementAction.performed -= OnComponentPlacementPerformed;
+            componentPlacementAction.Disable();
+        }
+
+        if (wirePlacementAction != null)
+        {
+            wirePlacementAction.performed -= OnWirePlacementPerformed;
+            wirePlacementAction.Disable();
+        }
+
+        if (pipePlacementAction != null)
+        {
+            pipePlacementAction.performed -= OnPipePlacementPerformed;
+            pipePlacementAction.Disable();
+        }
+
+        if (selectionAction != null)
+        {
+            selectionAction.performed -= OnSelectionPerformed;
+            selectionAction.Disable();
+        }
+
+        if (simulationAction != null)
+        {
+            simulationAction.performed -= OnSimulationPerformed;
+            simulationAction.Disable();
+        }
+    }
+
+    private void OnComponentPlacementPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        SetMode(GameMode.ComponentPlacement);
+    }
+
+    private void OnWirePlacementPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        SetMode(GameMode.WirePlacement);
+    }
+
+    private void OnPipePlacementPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        SetMode(GameMode.PipePlacement);
+    }
+
+    private void OnSelectionPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        SetMode(GameMode.Selection);
+    }
+
+    private void OnSimulationPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        SetMode(GameMode.Simulation);
+    }
 }
-
