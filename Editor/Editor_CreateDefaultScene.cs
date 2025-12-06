@@ -338,6 +338,7 @@ public static class Editor_CreateDefaultScene
         SceneManager.MoveGameObjectToScene(eventSystemGO, scene);
         eventSystemGO.AddComponent<EventSystem>();
         eventSystemGO.AddComponent<InputSystemUIInputModule>();
+        eventSystemGO.AddComponent<EventSystemInputSwitcher>();
         return eventSystemGO;
     }
 
