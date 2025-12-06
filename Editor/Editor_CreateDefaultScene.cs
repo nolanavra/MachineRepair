@@ -9,8 +9,10 @@ using UnityEngine.Tilemaps;
 using UnityEngine.UI;
 using TMPro;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.InputSystem;
 using MachineRepair;
 using MachineRepair.Grid;
+using MachineRepair.Input;
 
 public static class Editor_CreateDefaultScene
 {
@@ -22,19 +24,28 @@ public static class Editor_CreateDefaultScene
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
             return;
 
+        var actions = AssetDatabase.LoadAssetAtPath<InputActionAsset>("Assets/Input/MachineRepairControls.inputactions");
+        if (actions == null)
+        {
+            Debug.LogError("MachineRepairControls.inputactions not found at Assets/Input. Aborting scene creation.");
+            return;
+        }
+
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         SceneManager.SetActiveScene(scene);
 
+        var playerInput = CreatePlayerInputRoot(scene, actions);
+
         var camera = CreateCamera(scene);
         var gridManager = CreateGridRoot(scene);
-        var gameModeManager = CreateGameModeManager(scene);
+        var gameModeManager = CreateGameModeManager(scene, playerInput);
         var inventory = CreateInventory(scene);
         var simulationManager = CreateSimulationRoot(scene, gridManager);
-        var toolsRoot = CreateToolsRoot(scene, gridManager, inventory, camera);
+        var toolsRoot = CreateToolsRoot(scene, gridManager, inventory, camera, playerInput);
 
         var canvas = CreateCanvas(scene);
-        CreateEventSystem(scene);
-        CreateInventoryUI(canvas, inventory, toolsRoot.inputRouter);
+        CreateEventSystem(scene, actions);
+        CreateInventoryUI(canvas, inventory, toolsRoot.inputRouter, playerInput);
         CreateInspectorUI(canvas, toolsRoot.inputRouter, gridManager, inventory, toolsRoot.wireTool);
         CreateSimulationUI(canvas, simulationManager, gridManager, gameModeManager);
         CreateDebugUI(canvas, camera, gridManager, toolsRoot.inputRouter, gameModeManager);
@@ -43,6 +54,23 @@ public static class Editor_CreateDefaultScene
         Directory.CreateDirectory(Path.GetDirectoryName(ScenePath)!);
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorSceneManager.MarkSceneDirty(scene);
+    }
+
+    private static PlayerInput CreatePlayerInputRoot(Scene scene, InputActionAsset actions)
+    {
+        var inputGO = new GameObject("PlayerInput");
+        SceneManager.MoveGameObjectToScene(inputGO, scene);
+        var playerInput = inputGO.AddComponent<PlayerInput>();
+        playerInput.actions = actions;
+        playerInput.defaultActionMap = "Gameplay";
+        playerInput.notificationBehavior = PlayerNotifications.InvokeUnityEvents;
+
+        var enabler = inputGO.AddComponent<InputActionMapEnabler>();
+        var enablerSO = new SerializedObject(enabler);
+        enablerSO.FindProperty("playerInput").objectReferenceValue = playerInput;
+        enablerSO.ApplyModifiedPropertiesWithoutUndo();
+
+        return playerInput;
     }
 
     private static Camera CreateCamera(Scene scene)
@@ -98,11 +126,15 @@ public static class Editor_CreateDefaultScene
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    private static GameModeManager CreateGameModeManager(Scene scene)
+    private static GameModeManager CreateGameModeManager(Scene scene, PlayerInput playerInput)
     {
         var go = new GameObject("GameModeManager");
         SceneManager.MoveGameObjectToScene(go, scene);
-        return go.AddComponent<GameModeManager>();
+        var manager = go.AddComponent<GameModeManager>();
+        var so = new SerializedObject(manager);
+        so.FindProperty("playerInput").objectReferenceValue = playerInput;
+        so.ApplyModifiedPropertiesWithoutUndo();
+        return manager;
     }
 
     private static Inventory CreateInventory(Scene scene)
@@ -112,7 +144,7 @@ public static class Editor_CreateDefaultScene
         return go.AddComponent<Inventory>();
     }
 
-    private static (WirePlacementTool wireTool, InputRouter inputRouter) CreateToolsRoot(Scene scene, GridManager gridManager, Inventory inventory, Camera camera)
+    private static (WirePlacementTool wireTool, InputRouter inputRouter) CreateToolsRoot(Scene scene, GridManager gridManager, Inventory inventory, Camera camera, PlayerInput playerInput)
     {
         var go = new GameObject("Tools");
         SceneManager.MoveGameObjectToScene(go, scene);
@@ -121,6 +153,7 @@ public static class Editor_CreateDefaultScene
         var wireToolSO = new SerializedObject(wireTool);
         wireToolSO.FindProperty("grid").objectReferenceValue = gridManager;
         wireToolSO.FindProperty("cameraOverride").objectReferenceValue = camera;
+        wireToolSO.FindProperty("playerInput").objectReferenceValue = playerInput;
         wireToolSO.ApplyModifiedPropertiesWithoutUndo();
 
         var inputRouter = go.AddComponent<InputRouter>();
@@ -128,6 +161,7 @@ public static class Editor_CreateDefaultScene
         inputRouterSO.FindProperty("grid").objectReferenceValue = gridManager;
         inputRouterSO.FindProperty("inventory").objectReferenceValue = inventory;
         inputRouterSO.FindProperty("wireTool").objectReferenceValue = wireTool;
+        inputRouterSO.FindProperty("playerInput").objectReferenceValue = playerInput;
         inputRouterSO.ApplyModifiedPropertiesWithoutUndo();
 
         return (wireTool, inputRouter);
@@ -155,7 +189,7 @@ public static class Editor_CreateDefaultScene
         return canvasGO;
     }
 
-    private static void CreateInventoryUI(GameObject canvas, Inventory inventory, InputRouter inputRouter)
+    private static void CreateInventoryUI(GameObject canvas, Inventory inventory, InputRouter inputRouter, PlayerInput playerInput)
     {
         var inventoryUI = new GameObject("InventoryUI");
         inventoryUI.transform.SetParent(canvas.transform, false);
@@ -190,6 +224,7 @@ public static class Editor_CreateDefaultScene
         so.FindProperty("inputRouter").objectReferenceValue = inputRouter;
         so.FindProperty("slotPrefab").objectReferenceValue = slotPrefab;
         so.FindProperty("gridLayout").objectReferenceValue = gridLayout;
+        so.FindProperty("playerInput").objectReferenceValue = playerInput;
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 
@@ -332,13 +367,31 @@ public static class Editor_CreateDefaultScene
         return button;
     }
 
-    private static GameObject CreateEventSystem(Scene scene)
+    private static GameObject CreateEventSystem(Scene scene, InputActionAsset actions)
     {
         var eventSystemGO = new GameObject("EventSystem");
         SceneManager.MoveGameObjectToScene(eventSystemGO, scene);
         eventSystemGO.AddComponent<EventSystem>();
-        eventSystemGO.AddComponent<InputSystemUIInputModule>();
+        var uiModule = eventSystemGO.AddComponent<InputSystemUIInputModule>();
+        uiModule.actionsAsset = actions;
+        AssignIfFound(a => uiModule.point = a, actions, "UI/Point");
+        AssignIfFound(a => uiModule.leftClick = a, actions, "UI/Click");
+        AssignIfFound(a => uiModule.rightClick = a, actions, "UI/RightClick");
+        AssignIfFound(a => uiModule.middleClick = a, actions, "UI/MiddleClick");
+        AssignIfFound(a => uiModule.scrollWheel = a, actions, "UI/ScrollWheel");
+        AssignIfFound(a => uiModule.move = a, actions, "UI/Navigate");
+        AssignIfFound(a => uiModule.submit = a, actions, "UI/Submit");
+        AssignIfFound(a => uiModule.cancel = a, actions, "UI/Cancel");
+        AssignIfFound(a => uiModule.trackedDeviceOrientation = a, actions, "UI/TrackedDeviceOrientation");
+        AssignIfFound(a => uiModule.trackedDevicePosition = a, actions, "UI/TrackedDevicePosition");
         return eventSystemGO;
+    }
+
+    private static void AssignIfFound(Action<InputActionReference> setter, InputActionAsset asset, string actionPath)
+    {
+        var action = asset.FindAction(actionPath, throwIfNotFound: false);
+        if (action == null) return;
+        setter(InputActionReference.Create(action));
     }
 
     private static void FocusHierarchyAndScene()

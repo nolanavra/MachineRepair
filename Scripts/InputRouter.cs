@@ -6,8 +6,8 @@ using UnityEngine;
 using UnityEngine.EventSystems;     // For UI-hit checks
 using UnityEngine.InputSystem;      // New Input System
 
-/// Centralizes input handling, keys, mouseclick  (left/right) and routes to per-mode handlers.
-/// Uses GameModeManager + GridManager. Uses New Input System (Mouse.current).
+/// Centralizes input handling, pointer clicks, and routes to per-mode handlers via PlayerInput actions.
+/// Uses GameModeManager + GridManager. Uses New Input System action maps instead of legacy polling.
 namespace MachineRepair.Grid
 {
     public class InputRouter : MonoBehaviour, IGameModeListener
@@ -30,9 +30,10 @@ namespace MachineRepair.Grid
         }
 
         public event Action<SelectionInfo> SelectionChanged;
-        
+
         [Header("References")]
         [Tooltip("Auto-found at runtime if left unassigned.")]
+        [SerializeField] private PlayerInput playerInput;
         [SerializeField] private GridManager grid;
         [SerializeField] private Inventory inventory;
         [SerializeField] private GameObject currentComponentPrefab;
@@ -71,11 +72,25 @@ namespace MachineRepair.Grid
         private Vector2Int selectedCell = new Vector2Int(int.MinValue, int.MinValue);
         private CellSelectionTarget selectedTarget = CellSelectionTarget.None;
 
+        [Header("Input (Gameplay Map)")]
+        [SerializeField] private string gameplayMapName = "Gameplay";
+        [SerializeField] private string pointActionName = "Point";
+        [SerializeField] private string primaryClickActionName = "PrimaryClick";
+        [SerializeField] private string secondaryClickActionName = "SecondaryClick";
+        [SerializeField] private string rotatePlacementActionName = "RotatePlacement";
+
+        private InputAction pointAction;
+        private InputAction primaryClickAction;
+        private InputAction secondaryClickAction;
+        private InputAction rotatePlacementAction;
+        private Vector2 pointerScreenPosition;
+
         public SelectionInfo CurrentSelection { get; private set; }
-        
+
 
         private void Awake()
         {
+            if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
             cam = Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
             if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
@@ -85,12 +100,16 @@ namespace MachineRepair.Grid
                 Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
             }
             SetupHighlightVisual();
+            CacheInputActions();
         }
 
         private void OnEnable()
         {
             if (GameModeManager.Instance != null)
                 GameModeManager.Instance.RegisterListener(this);
+
+            CacheInputActions();
+            EnableInputActions();
         }
 
         private void OnDisable()
@@ -101,36 +120,20 @@ namespace MachineRepair.Grid
             // If we're disabled while a placement is in progress, refund the item
             // so the player doesn't lose inventory silently.
             RefundPendingPlacement();
+
+            DisableInputActions();
         }
 
         private void Update()
         {
-            var mouse = Mouse.current;
-            if (mouse == null || cam == null || grid == null) return;
+            if (cam == null || grid == null) return;
+
+            if (pointAction != null)
+                pointerScreenPosition = pointAction.ReadValue<Vector2>();
 
             if (blockWhenPointerOverUI && IsPointerOverUI()) return;
 
-            HandlePlacementHotkeys();
-
             if(highlightEnable)UpdateCellHighlight();
-
-            // LEFT CLICK
-            if (mouse.leftButton.wasPressedThisFrame)
-            {
-                cellDef cell = GetMouseCell();
-                Vector2Int pos = GetMousePos();
-                if (grid.InBounds(pos.x, pos.y))
-                    RouteLeftClick(cell, pos);
-            }
-
-            // RIGHT CLICK
-            if (mouse.rightButton.wasPressedThisFrame)
-            {
-                cellDef cell = GetMouseCell();
-                Vector2Int pos = GetMousePos();
-                if (grid.InBounds(pos.x, pos.y))
-                    RouteRightClick(cell, pos);
-            }
         }
 
        
@@ -422,15 +425,9 @@ namespace MachineRepair.Grid
         // Returns mouse position on grid
         public Vector2Int GetMousePos()
         {
-            Camera cam = Camera.main;
             if (cam == null) return default;
 
-            // With the new Input System, Mouse.current can be null (e.g., no mouse on device)
-            var mouse = Mouse.current;
-            if (mouse == null) return default;
-
-            Vector2 screenPos = mouse.position.ReadValue();
-            Vector3 mouseWorld = cam.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, 0f));
+            Vector3 mouseWorld = cam.ScreenToWorldPoint(new Vector3(pointerScreenPosition.x, pointerScreenPosition.y, 0f));
             mouseWorld.z = 0f;
 
             int x = Mathf.FloorToInt(mouseWorld.x);
@@ -574,19 +571,13 @@ namespace MachineRepair.Grid
             return true;
         }
 
-        private void HandlePlacementHotkeys()
+        private void HandlePlacementRotation()
         {
             if (GameModeManager.Instance == null) return;
             if (GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
             if (currentPlacementDef == null) return;
 
-            var kb = Keyboard.current;
-            if (kb == null) return;
-
-            if (kb.rKey.wasPressedThisFrame)
-            {
-                currentRotation = (currentRotation + 1) % 4;
-            }
+            currentRotation = (currentRotation + 1) % 4;
         }
 
         private List<Vector2Int> GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
@@ -812,4 +803,119 @@ namespace MachineRepair.Grid
     }
 }
 
+
+        private void CacheInputActions()
+        {
+            if (playerInput == null || playerInput.actions == null)
+            {
+                Debug.LogWarning("InputRouter has no PlayerInput; input will not be processed.");
+                return;
+            }
+
+            var map = playerInput.actions.FindActionMap(gameplayMapName, throwIfNotFound: false);
+            if (map == null)
+            {
+                Debug.LogWarning($"InputRouter could not find action map '{gameplayMapName}'.");
+                return;
+            }
+
+            pointAction = map.FindAction(pointActionName, throwIfNotFound: false);
+            primaryClickAction = map.FindAction(primaryClickActionName, throwIfNotFound: false);
+            secondaryClickAction = map.FindAction(secondaryClickActionName, throwIfNotFound: false);
+            rotatePlacementAction = map.FindAction(rotatePlacementActionName, throwIfNotFound: false);
+        }
+
+        private void EnableInputActions()
+        {
+            if (pointAction != null)
+            {
+                pointAction.performed += OnPointPerformed;
+                pointAction.canceled += OnPointPerformed;
+                pointAction.Enable();
+            }
+
+            if (primaryClickAction != null)
+            {
+                primaryClickAction.performed += OnPrimaryClickPerformed;
+                primaryClickAction.Enable();
+            }
+
+            if (secondaryClickAction != null)
+            {
+                secondaryClickAction.performed += OnSecondaryClickPerformed;
+                secondaryClickAction.Enable();
+            }
+
+            if (rotatePlacementAction != null)
+            {
+                rotatePlacementAction.performed += OnRotatePlacementPerformed;
+                rotatePlacementAction.Enable();
+            }
+        }
+
+        private void DisableInputActions()
+        {
+            if (pointAction != null)
+            {
+                pointAction.performed -= OnPointPerformed;
+                pointAction.canceled -= OnPointPerformed;
+                pointAction.Disable();
+            }
+
+            if (primaryClickAction != null)
+            {
+                primaryClickAction.performed -= OnPrimaryClickPerformed;
+                primaryClickAction.Disable();
+            }
+
+            if (secondaryClickAction != null)
+            {
+                secondaryClickAction.performed -= OnSecondaryClickPerformed;
+                secondaryClickAction.Disable();
+            }
+
+            if (rotatePlacementAction != null)
+            {
+                rotatePlacementAction.performed -= OnRotatePlacementPerformed;
+                rotatePlacementAction.Disable();
+            }
+        }
+
+        private void OnPointPerformed(InputAction.CallbackContext ctx)
+        {
+            pointerScreenPosition = ctx.ReadValue<Vector2>();
+        }
+
+        private bool CanProcessPointerInput()
+        {
+            if (cam == null || grid == null) return false;
+            if (blockWhenPointerOverUI && IsPointerOverUI()) return false;
+            return true;
+        }
+
+        private void OnPrimaryClickPerformed(InputAction.CallbackContext ctx)
+        {
+            if (!ctx.performed || !CanProcessPointerInput()) return;
+
+            cellDef cell = GetMouseCell();
+            Vector2Int pos = GetMousePos();
+            if (grid.InBounds(pos.x, pos.y))
+                RouteLeftClick(cell, pos);
+        }
+
+        private void OnSecondaryClickPerformed(InputAction.CallbackContext ctx)
+        {
+            if (!ctx.performed || !CanProcessPointerInput()) return;
+
+            cellDef cell = GetMouseCell();
+            Vector2Int pos = GetMousePos();
+            if (grid.InBounds(pos.x, pos.y))
+                RouteRightClick(cell, pos);
+        }
+
+        private void OnRotatePlacementPerformed(InputAction.CallbackContext ctx)
+        {
+            if (!ctx.performed) return;
+            HandlePlacementRotation();
+        }
 

@@ -18,6 +18,11 @@ public class SimpleInventoryUI : MonoBehaviour
     public GameObject inventoryPanel;
     [SerializeField] private InputRouter inputRouter;
 
+    [Header("Input")]
+    [SerializeField] private PlayerInput playerInput;
+    [SerializeField] private string gameplayMapName = "Gameplay";
+    [SerializeField] private string toggleActionName = "ToggleInventory";
+
     [Header("UI Setup")]
     public GameObject slotPrefab;           // prefab with Icon + Count
     public GridLayoutGroup gridLayout;      // parent container
@@ -28,6 +33,7 @@ public class SimpleInventoryUI : MonoBehaviour
 
     private readonly List<GameObject> slotInstances = new List<GameObject>();
     private int draggingSlotIndex = -1;
+    private InputAction toggleAction;
 
     private void Reset()
     {
@@ -37,19 +43,12 @@ public class SimpleInventoryUI : MonoBehaviour
     private void Start()
     {
         if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
+        if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
+        CacheInputActions();
+        EnableInput();
 
         if (refreshOnStart)
             RefreshUI();
-    }
-
-    private void Update()
-    {
-        var kb = Keyboard.current;
-        if (kb == null) return;
-
-        // 1..5 map to modes
-        if (kb.iKey.wasPressedThisFrame) ShowHideInventory();
-
     }
 
     public void ShowHideInventory()
@@ -174,6 +173,45 @@ public class SimpleInventoryUI : MonoBehaviour
     internal void EndSlotDrag()
     {
         draggingSlotIndex = -1;
+    }
+
+    private void CacheInputActions()
+    {
+        if (playerInput == null || playerInput.actions == null) return;
+
+        var map = playerInput.actions.FindActionMap(gameplayMapName, throwIfNotFound: false);
+        if (map == null) return;
+
+        toggleAction = map.FindAction(toggleActionName, throwIfNotFound: false);
+    }
+
+    private void EnableInput()
+    {
+        if (toggleAction != null)
+        {
+            toggleAction.performed += OnToggleInventoryPerformed;
+            toggleAction.Enable();
+        }
+    }
+
+    private void OnDisable()
+    {
+        DisableInput();
+    }
+
+    private void DisableInput()
+    {
+        if (toggleAction != null)
+        {
+            toggleAction.performed -= OnToggleInventoryPerformed;
+            toggleAction.Disable();
+        }
+    }
+
+    private void OnToggleInventoryPerformed(InputAction.CallbackContext ctx)
+    {
+        if (!ctx.performed) return;
+        ShowHideInventory();
     }
 }
 
