@@ -15,6 +15,7 @@ namespace MachineRepair.Grid
     {
         public MachineComponent component;    // machine / fixture
         public PlacedWire wire;               // electrical
+        public WireDef wireDef;               // wire definition
         public bool pipe;                     // plumbing
 
         public bool HasComponent => component != null;
@@ -25,6 +26,7 @@ namespace MachineRepair.Grid
         {
             component = null;
             wire = null;
+            wireDef = null;
             pipe = false;
         }
     }
@@ -38,6 +40,7 @@ namespace MachineRepair.Grid
         // Contents of the cell:
         public MachineComponent component;    // machine / fixture
         public PlacedWire wire;               // placed wire data
+        public WireDef wireDef;               // wire definition data
         public bool pipe;                     // plumbing
 
         // Convenience helpers
@@ -53,6 +56,7 @@ namespace MachineRepair.Grid
                 placeability = terrain.placeability,
                 component = occupancy.component,
                 wire = occupancy.wire,
+                wireDef = occupancy.wireDef,
                 pipe = occupancy.pipe
             };
         }

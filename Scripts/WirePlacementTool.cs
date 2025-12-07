@@ -29,6 +29,8 @@ namespace MachineRepair
         [SerializeField] private LineRenderer wirePreviewPrefab;
 
         [Header("Appearance")]
+        [SerializeField] private Color powerWireColor = Color.cyan;
+        [SerializeField] private Color signalWireColor = new Color(0.8f, 0.5f, 1f, 1f);
         [SerializeField] private Color wireColor = Color.cyan;
 
         [Header("Behavior")]
@@ -40,6 +42,8 @@ namespace MachineRepair
         [SerializeField] private string pointActionName = "Point";
 
         [Header("Simulation")]
+        [SerializeField] private WireDef powerWireDef;
+        [SerializeField] private WireDef signalWireDef;
         [SerializeField] private float defaultWireResistance = 1f;
         [SerializeField] private float maxWireCurrentBeforeDamage = 10f;
         [SerializeField] private float maxWireResistanceBeforeDamage = 5f;
@@ -59,6 +63,9 @@ namespace MachineRepair
         {
             cam = cameraOverride != null ? cameraOverride : Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
+
+            EnsureWireDefs();
+            SyncWireColorToType();
 
             if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
             CacheInputActions();
@@ -142,6 +149,8 @@ namespace MachineRepair
         public void SetWireType(WireType type)
         {
             wireType = type;
+            SyncWireColorToType();
+            ApplyWireColor(activePreview);
         }
 
         /// <summary>
@@ -293,6 +302,10 @@ namespace MachineRepair
             cameFrom[start] = start;
 
             Vector2Int[] dirs = { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
+            Vector2Int[] diagonals =
+            {
+                new Vector2Int(1, 1), new Vector2Int(1, -1), new Vector2Int(-1, 1), new Vector2Int(-1, -1)
+            };
 
             while (frontier.Count > 0)
             {
@@ -313,6 +326,22 @@ namespace MachineRepair
 
                     frontier.Enqueue(next);
                     cameFrom[next] = current;
+                }
+
+                foreach (var diag in diagonals)
+                {
+                    var next = current + diag;
+                    if (!grid.InBounds(next.x, next.y)) continue;
+                    if (cameFrom.ContainsKey(next)) continue;
+                    if (!grid.TryGetCell(next, out var nextCell)) continue;
+
+                    bool isGoal = next == goal;
+                    bool blockedByComponent = nextCell.HasComponent && !isGoal && next != start;
+                    bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
+                    if (blockedByComponent || blockedByPlaceability) continue;
+
+                    cameFrom[next] = current;
+                    frontier.Enqueue(next);
                 }
             }
 
@@ -389,13 +418,14 @@ namespace MachineRepair
             go.transform.SetParent(transform, worldPositionStays: false);
             var placedWire = go.AddComponent<PlacedWire>();
             placedWire.wireType = wireType;
+            placedWire.wireDef = ActiveWireDef;
             placedWire.startComponent = startCellDef.component;
             placedWire.endComponent = endCellDef.component;
             placedWire.startPortCell = startCell.Value;
             placedWire.endPortCell = targetCell;
             placedWire.occupiedCells.AddRange(path);
             placedWire.resistance = defaultWireResistance;
-            placedWire.EvaluateDamage(maxWireCurrentBeforeDamage, maxWireResistanceBeforeDamage);
+            placedWire.EvaluateDamage(ActiveWireDef?.maxCurrent ?? maxWireCurrentBeforeDamage, maxWireResistanceBeforeDamage);
 
             return placedWire;
         }
@@ -434,6 +464,35 @@ namespace MachineRepair
 
             connection.startComponent.RegisterConnection(portType, connection.endComponent);
             connection.endComponent.RegisterConnection(portType, connection.startComponent);
+        }
+
+        private WireDef ActiveWireDef => wireType == WireType.Signal ? signalWireDef : powerWireDef;
+
+        private void EnsureWireDefs()
+        {
+            if (powerWireDef == null)
+            {
+                powerWireDef = ScriptableObject.CreateInstance<WireDef>();
+                powerWireDef.displayName = "Power Wire";
+                powerWireDef.wireType = WireType.AC;
+                powerWireDef.maxCurrent = maxWireCurrentBeforeDamage;
+                powerWireDef.wireColor = powerWireColor;
+            }
+
+            if (signalWireDef == null)
+            {
+                signalWireDef = ScriptableObject.CreateInstance<WireDef>();
+                signalWireDef.displayName = "Signal Wire";
+                signalWireDef.wireType = WireType.Signal;
+                signalWireDef.maxCurrent = Mathf.Min(maxWireCurrentBeforeDamage, 5f);
+                signalWireDef.wireColor = signalWireColor;
+            }
+        }
+
+        private void SyncWireColorToType()
+        {
+            var def = ActiveWireDef;
+            wireColor = def != null ? def.wireColor : wireType == WireType.Signal ? signalWireColor : powerWireColor;
         }
     }
 }

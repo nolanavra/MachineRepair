@@ -457,6 +457,7 @@ namespace MachineRepair.Grid
                 int idx = ToIndex(c);
                 var occupancy = occupancyByIndex[idx];
                 occupancy.wire = wire;
+                occupancy.wireDef = wire.wireDef;
                 occupancyByIndex[idx] = occupancy;
                 placedAny = true;
             }

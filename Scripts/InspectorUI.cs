@@ -102,15 +102,15 @@ public class InspectorUI : MonoBehaviour
         SetParameters("No simulation parameters for pipes.");
     }
 
-    private void PresentWire(InputRouter.SelectionInfo selection)
-    {
-        WireType wireType = selection.cellData.wire != null ? selection.cellData.wire.wireType : WireType.None;
-        string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
-        SetTitle(wireLabel);
-        SetDescription("Carries electrical or signal connections between components.");
-        SetConnections(BuildWireConnectionSummary(selection.cell));
-        SetParameters("No simulation parameters for wires.");
-    }
+        private void PresentWire(InputRouter.SelectionInfo selection)
+        {
+            WireType wireType = selection.cellData.wire != null ? selection.cellData.wire.wireType : WireType.None;
+            string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
+            SetTitle(wireLabel);
+            SetDescription("Carries electrical or signal connections between components.");
+            SetConnections(BuildWireConnectionSummary(selection.cell));
+            SetParameters(BuildWireParameters(selection.cellData));
+        }
 
     private void PresentEmpty(InputRouter.SelectionInfo selection)
     {
@@ -215,6 +215,20 @@ public class InspectorUI : MonoBehaviour
             return $"{typeLabel} connection: {startLabel} loops to itself.";
 
         return $"{typeLabel} connection: {startLabel} to {endLabel}.";
+    }
+
+    private string BuildWireParameters(cellDef cell)
+    {
+        if (cell.wireDef == null)
+            return "No simulation parameters for wires.";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Wire Parameters:");
+        string kind = cell.wireDef.wireType == WireType.Signal ? "Signal" : "Power";
+        sb.AppendLine($"- Kind: {kind}");
+        sb.AppendLine($"- Max Current: {cell.wireDef.maxCurrent} A");
+
+        return sb.ToString();
     }
 
     private string ResolveComponentName(MachineComponent component)
