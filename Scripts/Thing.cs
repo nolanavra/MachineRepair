@@ -29,6 +29,15 @@ namespace MachineRepair {
         [SerializeField] private Transform portMarkerParent;
         [SerializeField] private List<SpriteRenderer> portMarkers = new();
 
+        [Header("Connections")]
+        [SerializeField] private List<MachineComponent> powerConnections = new();
+        [SerializeField] private List<MachineComponent> waterConnections = new();
+        [SerializeField] private List<MachineComponent> signalConnections = new();
+
+        public IReadOnlyList<MachineComponent> PowerConnections => powerConnections;
+        public IReadOnlyList<MachineComponent> WaterConnections => waterConnections;
+        public IReadOnlyList<MachineComponent> SignalConnections => signalConnections;
+
         public Vector2Int GetGlobalCell(Vector2Int localCell)
         {
             return anchorCell + RotateOffset(localCell, rotation);
@@ -38,6 +47,31 @@ namespace MachineRepair {
         {
             Vector2Int footprintOrigin = footprint.origin;
             return port.ToGlobalCell(anchorCell, rotation, footprintOrigin);
+        }
+
+        public void RegisterConnection(PortType portType, MachineComponent other)
+        {
+            if (other == null || other == this) return;
+
+            switch (portType)
+            {
+                case PortType.Power:
+                    AddUnique(powerConnections, other);
+                    break;
+                case PortType.Water:
+                    AddUnique(waterConnections, other);
+                    break;
+                case PortType.Signal:
+                    AddUnique(signalConnections, other);
+                    break;
+            }
+        }
+
+        public void ClearConnections()
+        {
+            powerConnections.Clear();
+            waterConnections.Clear();
+            signalConnections.Clear();
         }
 
         public void RefreshPortMarkers(
@@ -145,6 +179,14 @@ namespace MachineRepair {
             result.sortingOrder = sortingOrder;
             result.sprite = sprite;
             return result;
+        }
+
+        private static void AddUnique(List<MachineComponent> list, MachineComponent component)
+        {
+            if (!list.Contains(component))
+            {
+                list.Add(component);
+            }
         }
 
         private static Color ResolvePortColor(PortType port, Color powerColor, Color waterColor, Color signalColor)

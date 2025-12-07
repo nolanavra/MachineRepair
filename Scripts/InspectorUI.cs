@@ -42,12 +42,20 @@ public class InspectorUI : MonoBehaviour
         {
             ClearDisplay();
         }
+
+        if (wireTool != null)
+        {
+            wireTool.ConnectionRegistered += OnWireConnectionRegistered;
+        }
     }
 
     private void OnDisable()
     {
         if (inputRouter != null)
             inputRouter.SelectionChanged -= OnSelectionChanged;
+
+        if (wireTool != null)
+            wireTool.ConnectionRegistered -= OnWireConnectionRegistered;
     }
 
     private void OnSelectionChanged(InputRouter.SelectionInfo selection)
@@ -150,29 +158,41 @@ public class InspectorUI : MonoBehaviour
     {
         if (grid == null) return "Connection data unavailable.";
 
-        var neighbors = new List<string>();
-        var offsets = new[] { Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right };
-        for (int i = 0; i < offsets.Length; i++)
+        if (!grid.TryGetCell(cell, out var cellData) || cellData.component == null)
+            return "No connections.";
+
+        var component = cellData.component;
+
+        var sb = new StringBuilder();
+        AppendConnectionSection(sb, "Power", component.PowerConnections);
+        AppendConnectionSection(sb, "Water", component.WaterConnections);
+        AppendConnectionSection(sb, "Signal", component.SignalConnections);
+
+        return sb.Length == 0
+            ? "Not connected to any components."
+            : sb.ToString();
+    }
+
+    private void AppendConnectionSection(StringBuilder sb, string label, IReadOnlyList<MachineComponent> connections)
+    {
+        string content = connections == null || connections.Count == 0
+            ? "None"
+            : string.Join(", ", FormatConnectionNames(connections));
+
+        sb.AppendLine($"{label}: {content}");
+    }
+
+    private IEnumerable<string> FormatConnectionNames(IReadOnlyList<MachineComponent> connections)
+    {
+        if (connections == null) yield break;
+
+        var seen = new HashSet<MachineComponent>();
+        foreach (var connection in connections)
         {
-            var candidate = cell + offsets[i];
-            if (!grid.InBounds(candidate.x, candidate.y)) continue;
-
-            var neighborCell = grid.GetCell(candidate);
-            if (!neighborCell.HasComponent) continue;
-
-            var def = ResolveComponentDef(neighborCell.component);
-            string label = def?.displayName ?? neighborCell.component.name;
-            if (!neighbors.Contains(label))
-                neighbors.Add(label);
+            if (connection == null || seen.Contains(connection)) continue;
+            seen.Add(connection);
+            yield return ResolveComponentName(connection);
         }
-
-        return neighbors.Count switch
-        {
-            0 => "Not connected to any components.",
-            1 => $"Connected to {neighbors[0]}",
-            2 => $"Between {neighbors[0]} and {neighbors[1]}",
-            _ => $"Connections: {string.Join(", ", neighbors)}"
-        };
     }
 
     private string BuildWireConnectionSummary(Vector2Int cell)
@@ -187,16 +207,28 @@ public class InspectorUI : MonoBehaviour
         string startLabel = $"{startName} at ({connection.startCell.x}, {connection.startCell.y})";
         string endLabel = $"{endName} at ({connection.endCell.x}, {connection.endCell.y})";
 
-        if (connection.startCell == connection.endCell)
-            return $"Connects {startLabel} to itself.";
+        string typeLabel = connection.wireType == WireType.Signal
+            ? "Signal"
+            : "Power";
 
-        return $"Connects {startLabel} to {endLabel}.";
+        if (connection.startCell == connection.endCell)
+            return $"{typeLabel} connection: {startLabel} loops to itself.";
+
+        return $"{typeLabel} connection: {startLabel} to {endLabel}.";
     }
 
     private string ResolveComponentName(MachineComponent component)
     {
         var def = ResolveComponentDef(component);
         return def?.displayName ?? component?.name ?? "Component";
+    }
+
+    private void OnWireConnectionRegistered(WirePlacementTool.WireConnectionInfo obj)
+    {
+        if (inputRouter != null)
+        {
+            OnSelectionChanged(inputRouter.CurrentSelection);
+        }
     }
 
     private void SetTitle(string value)

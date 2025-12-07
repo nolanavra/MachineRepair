@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -51,6 +52,8 @@ namespace MachineRepair
         private Vector2Int? startCell;
         private InputAction pointAction;
         private Vector2 pointerScreenPosition;
+
+        public event Action<WireConnectionInfo> ConnectionRegistered;
 
         private void Awake()
         {
@@ -412,6 +415,17 @@ namespace MachineRepair
             {
                 connectionByCell[pos] = connection;
             }
+
+            RegisterComponentConnections(connection);
+            ConnectionRegistered?.Invoke(connection);
+        }
+
+        private void RegisterComponentConnections(WireConnectionInfo connection)
+        {
+            var portType = connection.wireType == WireType.Signal ? PortType.Signal : PortType.Power;
+
+            connection.startComponent.RegisterConnection(portType, connection.endComponent);
+            connection.endComponent.RegisterConnection(portType, connection.startComponent);
         }
     }
 }
