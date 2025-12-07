@@ -9,7 +9,7 @@ using UnityEngine.UI;
 /// Very simple UI for SimpleInventory.
 /// Place this on a GameObject with a GridLayoutGroup, and assign:
 /// - inventory: reference to SimpleInventory
-/// - slotPrefab: a prefab containing an Image for icon and Text for count
+/// - slotPrefab: a prefab containing an InventorySlotView wired to background, icon, and quantity visuals
 /// </summary>
 public class SimpleInventoryUI : MonoBehaviour
 {
@@ -26,6 +26,7 @@ public class SimpleInventoryUI : MonoBehaviour
     [Header("UI Setup")]
     public GameObject slotPrefab;           // prefab with Icon + Count
     public GridLayoutGroup gridLayout;      // parent container
+    [SerializeField] private Sprite defaultSlotSprite;
 
     [Header("Options")]
     public bool refreshOnStart = true;
@@ -97,31 +98,18 @@ public class SimpleInventoryUI : MonoBehaviour
             GameObject slotGO = Instantiate(slotPrefab, gridLayout.transform);
             slotInstances.Add(slotGO);
 
-            // Find icon & text components in prefab
-            Image icon = null;
-            Text countText = null;
-
-            // You can also do named lookups if you prefer:
-            // icon = slotGO.transform.Find("Icon").GetComponent<Image>();
-            // countText = slotGO.transform.Find("Count").GetComponent<Text>();
-
-            foreach (var img in slotGO.GetComponentsInChildren<Image>())
+            var slotView = slotGO.GetComponent<InventorySlotView>();
+            if (slotView == null)
             {
-                if (icon == null && img.gameObject.name.ToLower().Contains("icon"))
-                    icon = img;
-            }
-
-            foreach (var txt in slotGO.GetComponentsInChildren<Text>())
-            {
-                if (countText == null && txt.gameObject.name.ToLower().Contains("count"))
-                    countText = txt;
+                Debug.LogError("SimpleInventoryUI: slotPrefab is missing an InventorySlotView component.");
+                continue;
             }
 
             var slotComponent = slotGO.GetComponent<InventorySlotUI>();
             if (slotComponent == null) slotComponent = slotGO.AddComponent<InventorySlotUI>();
 
             var def = slotData.IsEmpty ? null : inventory.GetDef(slotData.id);
-            slotComponent.Initialize(this, i, icon, countText, def?.icon, slotData.quantity);
+            slotComponent.Initialize(this, i, slotView, defaultSlotSprite, def?.icon, slotData.quantity);
         }
     }
 
@@ -215,29 +203,28 @@ public class SimpleInventoryUI : MonoBehaviour
     }
 }
 
+[RequireComponent(typeof(InventorySlotView))]
 internal class InventorySlotUI : MonoBehaviour, IPointerClickHandler, IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler
 {
     private SimpleInventoryUI owner;
     private int slotIndex;
-    private Image icon;
-    private Text countText;
+    private InventorySlotView slotView;
     private RectTransform rectTransform;
     private Vector3 startPosition;
     private CanvasGroup canvasGroup;
 
-    public void Initialize(SimpleInventoryUI owner, int slotIndex, Image icon, Text countText, Sprite iconSprite, int quantity)
+    public void Initialize(SimpleInventoryUI owner, int slotIndex, InventorySlotView slotView, Sprite slotSprite, Sprite iconSprite, int quantity)
     {
         this.owner = owner;
         this.slotIndex = slotIndex;
-        this.icon = icon;
-        this.countText = countText;
+        this.slotView = slotView;
 
         rectTransform = transform as RectTransform;
         canvasGroup = GetComponent<CanvasGroup>();
         if (canvasGroup == null)
             canvasGroup = gameObject.AddComponent<CanvasGroup>();
 
-        ApplyVisual(iconSprite, quantity);
+        ApplyVisual(slotSprite, iconSprite, quantity);
     }
 
     public void OnPointerClick(PointerEventData eventData)
@@ -270,17 +257,8 @@ internal class InventorySlotUI : MonoBehaviour, IPointerClickHandler, IBeginDrag
         owner?.HandleSlotDrop(slotIndex);
     }
 
-    private void ApplyVisual(Sprite iconSprite, int quantity)
+    private void ApplyVisual(Sprite slotSprite, Sprite iconSprite, int quantity)
     {
-        if (icon != null)
-        {
-            icon.sprite = iconSprite;
-            icon.color = (iconSprite != null) ? Color.white : new Color(1, 1, 1, 0);
-        }
-
-        if (countText != null)
-        {
-            countText.text = (quantity > 1) ? quantity.ToString() : string.Empty;
-        }
+        slotView?.SetData(slotSprite, iconSprite, quantity);
     }
 }
