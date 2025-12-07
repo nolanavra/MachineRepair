@@ -288,46 +288,67 @@ namespace MachineRepair.Grid
 
             for (int i = 0; i < cellHighlights.Length; i++)
             {
-                var renderer = cellHighlights[i];
-                if (renderer == null) continue;
-
-                var cell = BuildCellDef(i);
-                bool hasComponent = cell.HasComponent;
-                bool hasWire = cell.HasWire;
-                bool hasPipe = cell.HasPipe;
-                bool hasContent = hasComponent || hasWire || hasPipe;
-
-                // Disable highlights for out-of-bounds or blocked cells without contents
-                if (cell.placeability == CellPlaceability.Blocked && !hasContent)
-                {
-                    renderer.enabled = false;
-                    continue;
-                }
-
-                Color color;
-                if (hasContent)
-                {
-                    bool mixed = (hasComponent ? 1 : 0) + (hasWire ? 1 : 0) + (hasPipe ? 1 : 0) > 1;
-                    color = mixed
-                        ? mixedContentColor
-                        : hasComponent ? componentContentColor
-                        : hasWire ? wireContentColor
-                        : pipeContentColor;
-                }
-                else
-                {
-                    color = cell.placeability switch
-                    {
-                        CellPlaceability.Placeable => placeableColor,
-                        CellPlaceability.ConnectorsOnly => connectorsOnlyColor,
-                        CellPlaceability.Display => displayColor,
-                        _ => blockedColor
-                    };
-                }
-
-                renderer.color = color;
-                renderer.enabled = true;
+                RefreshCellHighlight(i);
             }
+        }
+
+        private void RefreshCellHighlight(int index)
+        {
+            if (!enableCellHighlights) return;
+            if (cellHighlights == null || index < 0 || index >= cellHighlights.Length) return;
+
+            var renderer = cellHighlights[index];
+            if (renderer == null) return;
+
+            var cell = BuildCellDef(index);
+            bool hasComponent = cell.HasComponent;
+            bool hasWire = cell.HasWire;
+            bool hasPipe = cell.HasPipe;
+            bool hasContent = hasComponent || hasWire || hasPipe;
+
+            // Disable highlights for out-of-bounds or blocked cells without contents
+            if (cell.placeability == CellPlaceability.Blocked && !hasContent)
+            {
+                renderer.enabled = false;
+                return;
+            }
+
+            Color color;
+            if (hasContent)
+            {
+                bool mixed = (hasComponent ? 1 : 0) + (hasWire ? 1 : 0) + (hasPipe ? 1 : 0) > 1;
+                color = mixed
+                    ? mixedContentColor
+                    : hasComponent ? componentContentColor
+                    : hasWire ? wireContentColor
+                    : pipeContentColor;
+            }
+            else
+            {
+                color = cell.placeability switch
+                {
+                    CellPlaceability.Placeable => placeableColor,
+                    CellPlaceability.ConnectorsOnly => connectorsOnlyColor,
+                    CellPlaceability.Display => displayColor,
+                    _ => blockedColor
+                };
+            }
+
+            renderer.color = color;
+            renderer.enabled = true;
+        }
+
+        private void UpdateCellPlaceability(int index, CellPlaceability placeability)
+        {
+            if (terrainByIndex == null || index < 0 || index >= terrainByIndex.Length) return;
+
+            var terrain = terrainByIndex[index];
+            if (terrain.placeability == placeability) return;
+
+            terrain.placeability = placeability;
+            terrainByIndex[index] = terrain;
+
+            RefreshCellHighlight(index);
         }
 
 
@@ -358,7 +379,7 @@ namespace MachineRepair.Grid
             return true;
         }
 
-        public bool TryPlaceComponent(Vector2Int c, MachineComponent component)
+        public bool TryPlaceComponent(Vector2Int c, MachineComponent component, bool markTerrainConnectorsOnly = false)
         {
             if (!InBounds(c.x, c.y)) return false;
             int i = ToIndex(c);
@@ -370,6 +391,12 @@ namespace MachineRepair.Grid
 
             occupancy.component = component;
             occupancyByIndex[i] = occupancy;
+
+            if (markTerrainConnectorsOnly)
+            {
+                UpdateCellPlaceability(i, CellPlaceability.ConnectorsOnly);
+            }
+
             return true;
         }
 
