@@ -22,6 +22,11 @@ public class Inventory : MonoBehaviour
     [Min(1)]
     public int slotCount = 16;
 
+    [Header("Testing")]
+    [Tooltip("When enabled, seeds the inventory with dummy sample stacks on Awake for debugging.")]
+    [SerializeField]
+    private bool seedDummyInventoryOnAwake = false;
+
     [Header("Runtime Slots (read-only)")]
     [SerializeField]
     private List<ItemStack> slots = new List<ItemStack>();
@@ -57,6 +62,9 @@ public class Inventory : MonoBehaviour
         Instance = this;
 
         InitSlots();
+
+        if (seedDummyInventoryOnAwake)
+            SeedDummyInventory();
     }
 
 
@@ -222,6 +230,25 @@ public class Inventory : MonoBehaviour
                 return inventoryCatalog[i];
         }
         return null;
+    }
+
+    private void SeedDummyInventory()
+    {
+        List<ItemStack> sampleStacks = TestingDummy.BuildSampleStacks(this);
+        if (sampleStacks == null || sampleStacks.Count == 0)
+            return;
+
+        for (int i = 0; i < slots.Count; i++)
+            slots[i].Clear();
+
+        for (int i = 0; i < sampleStacks.Count; i++)
+        {
+            ItemStack stack = sampleStacks[i];
+            if (stack == null || stack.IsEmpty)
+                continue;
+
+            AddItem(stack.id, stack.quantity);
+        }
     }
 
     #region Debug Helpers (optional)
