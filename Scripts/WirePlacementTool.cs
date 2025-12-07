@@ -100,7 +100,7 @@ namespace MachineRepair
             if (grid == null || cam == null) return;
             if (!grid.InBounds(cellPos.x, cellPos.y)) return;
             if (!grid.TryGetCell(cellPos, out var cell)) return;
-            if (!IsPowerPortCell(cell)) return;
+            if (!IsWirePortCell(cellPos, cell)) return;
 
             if (!startCell.HasValue)
             {
@@ -134,12 +134,28 @@ namespace MachineRepair
         }
 
         /// <summary>
-        /// Returns true when the cell represents a power connection port.
+        /// Returns true when the cell represents a valid wire connection port (power or signal).
         /// </summary>
-        private bool IsPowerPortCell(cellDef cell)
+        private bool IsWirePortCell(Vector2Int cellPos, cellDef cell)
         {
             if (cell.placeability == CellPlaceability.Blocked) return false;
-            return cell.HasComponent && cell.component.def != null && cell.component.def.type == ComponentType.ChassisPowerConnection;
+            if (!cell.HasComponent || cell.component == null) return false;
+
+            var portDef = cell.component.portDef;
+            if (portDef == null || portDef.ports == null || portDef.ports.Length == 0) return false;
+
+            foreach (var port in portDef.ports)
+            {
+                if (port.port != PortType.Power && port.port != PortType.Signal) continue;
+
+                var globalPortCell = cell.component.GetGlobalCell(port);
+                if (globalPortCell == cellPos)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void BeginPreview(Vector2Int cellPos)
