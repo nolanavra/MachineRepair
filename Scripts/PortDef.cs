@@ -13,17 +13,29 @@ namespace MachineRepair
 
         public Vector2Int ToGlobalCell(Vector2Int anchor, int rotation)
         {
-            return anchor + GetRotatedOffset(rotation);
+            return ToGlobalCell(anchor, rotation, Vector2Int.zero);
+        }
+
+        public Vector2Int ToGlobalCell(Vector2Int anchor, int rotation, Vector2Int footprintOrigin)
+        {
+            return anchor + GetRotatedOffset(rotation, footprintOrigin);
         }
 
         public Vector2Int GetRotatedOffset(int rotation)
         {
+            return GetRotatedOffset(rotation, Vector2Int.zero);
+        }
+
+        public Vector2Int GetRotatedOffset(int rotation, Vector2Int footprintOrigin)
+        {
+            Vector2Int local = cell - footprintOrigin;
+
             return rotation switch
             {
-                1 => new Vector2Int(cell.y, -cell.x),
-                2 => new Vector2Int(-cell.x, -cell.y),
-                3 => new Vector2Int(-cell.y, cell.x),
-                _ => cell
+                1 => new Vector2Int(local.y, -local.x),
+                2 => new Vector2Int(-local.x, -local.y),
+                3 => new Vector2Int(-local.y, local.x),
+                _ => local
             };
         }
     }

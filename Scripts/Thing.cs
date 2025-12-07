@@ -36,7 +36,8 @@ namespace MachineRepair {
 
         public Vector2Int GetGlobalCell(PortLocal port)
         {
-            return port.ToGlobalCell(anchorCell, rotation);
+            Vector2Int footprintOrigin = footprint.origin;
+            return port.ToGlobalCell(anchorCell, rotation, footprintOrigin);
         }
 
         public void RefreshPortMarkers(
