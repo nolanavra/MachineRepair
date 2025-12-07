@@ -17,6 +17,8 @@ namespace MachineRepair
         [SerializeField] private SimulationManager simulationManager;
         [SerializeField] private GridManager gridManager;
         [SerializeField] private GameModeManager gameModeManager;
+        [Tooltip("Root panel GameObject that contains all Simulation UI controls.")]
+        [SerializeField] private GameObject simulationPanel;
         [SerializeField] private Button startPowerButton;
         [SerializeField] private Button startWaterButton;
         [SerializeField] private TextMeshProUGUI powerLabel;
@@ -49,6 +51,7 @@ namespace MachineRepair
         private readonly Stack<SpriteRenderer> leakPool = new();
         private bool waterActive;
         private bool isSimulationMode;
+        private CanvasGroup simulationCanvasGroup;
 
         private void Awake()
         {
@@ -66,6 +69,13 @@ namespace MachineRepair
             {
                 gameModeManager = GameModeManager.Instance;
             }
+
+            if (simulationPanel == null)
+            {
+                simulationPanel = gameObject;
+            }
+
+            simulationCanvasGroup = simulationPanel.GetComponent<CanvasGroup>();
 
             if (pipeArrowParent == null)
             {
@@ -100,6 +110,7 @@ namespace MachineRepair
                 isSimulationMode = gameModeManager.CurrentMode == GameMode.Simulation;
             }
 
+            ToggleSimulationUI(isSimulationMode);
             UpdateStatus();
             RefreshPipeArrows();
         }
@@ -182,6 +193,7 @@ namespace MachineRepair
         public void OnEnterMode(GameMode newMode)
         {
             isSimulationMode = newMode == GameMode.Simulation;
+            ToggleSimulationUI(isSimulationMode);
             UpdateArrowVisibility();
             UpdateLeakVisibility();
         }
@@ -191,6 +203,7 @@ namespace MachineRepair
             if (oldMode == GameMode.Simulation)
             {
                 isSimulationMode = false;
+                ToggleSimulationUI(false);
                 UpdateArrowVisibility();
                 UpdateLeakVisibility();
             }
@@ -307,6 +320,39 @@ namespace MachineRepair
         }
 
         private bool ShouldShowArrows() => waterActive && isSimulationMode;
+
+        private void ToggleSimulationUI(bool visible)
+        {
+            if (simulationPanel == null)
+            {
+                Debug.LogWarning("SimulationUI: No simulation panel assigned to toggle.");
+                return;
+            }
+
+            if (simulationPanel == gameObject)
+            {
+                if (simulationCanvasGroup == null)
+                {
+                    simulationCanvasGroup = simulationPanel.GetComponent<CanvasGroup>();
+                }
+
+                if (simulationCanvasGroup == null)
+                {
+                    simulationCanvasGroup = simulationPanel.AddComponent<CanvasGroup>();
+                }
+
+                simulationCanvasGroup.alpha = visible ? 1f : 0f;
+                simulationCanvasGroup.interactable = visible;
+                simulationCanvasGroup.blocksRaycasts = visible;
+            }
+            else
+            {
+                if (simulationPanel.activeSelf != visible)
+                {
+                    simulationPanel.SetActive(visible);
+                }
+            }
+        }
 
         private void SyncLeaks(IReadOnlyList<SimulationManager.LeakInfo> leaks)
         {
