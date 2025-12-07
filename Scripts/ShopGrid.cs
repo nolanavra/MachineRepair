@@ -227,6 +227,27 @@ namespace MachineRepair.Grid
             return cells;
         }
 
+        private List<Vector2Int> GetFootprintCells(MachineComponent component)
+        {
+            var cells = new List<Vector2Int>();
+            if (component == null || component.footprint.occupied == null) return cells;
+
+            FootprintMask footprint = component.footprint;
+            for (int y = 0; y < footprint.height; y++)
+            {
+                for (int x = 0; x < footprint.width; x++)
+                {
+                    if (!footprint.occupied[y * footprint.width + x]) continue;
+
+                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
+                    Vector2Int rotated = RotateOffset(local, component.rotation);
+                    cells.Add(component.anchorCell + rotated);
+                }
+            }
+
+            return cells;
+        }
+
         private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell)
         {
             GameObject instance = componentPrefab != null
@@ -441,6 +462,17 @@ namespace MachineRepair.Grid
         public int ToIndex(Vector2Int c) => CellIndex.ToIndex(c.x, c.y, width);
         public (int x, int y) FromIndex(int index) => CellIndex.FromIndex(index, width);
 
+        private static Vector2Int RotateOffset(Vector2Int offset, int rotationSteps)
+        {
+            return rotationSteps switch
+            {
+                1 => new Vector2Int(offset.y, -offset.x),
+                2 => new Vector2Int(-offset.x, -offset.y),
+                3 => new Vector2Int(-offset.y, offset.x),
+                _ => offset
+            };
+        }
+
         // --- Cells ---
         public cellDef GetCell(Vector2Int c) => BuildCellDef(ToIndex(c));
 
@@ -493,6 +525,39 @@ namespace MachineRepair.Grid
             occupancy.component?.DestroyPortMarkers();
             occupancy.component = null;
             occupancyByIndex[i] = occupancy;
+            return true;
+        }
+
+        public bool RemoveComponent(MachineComponent component)
+        {
+            if (component == null) return false;
+
+            var footprintCells = GetFootprintCells(component);
+            if (footprintCells.Count == 0) return false;
+
+            bool removedAny = false;
+            for (int i = 0; i < footprintCells.Count; i++)
+            {
+                var cell = footprintCells[i];
+                if (!InBounds(cell.x, cell.y)) continue;
+
+                int idx = ToIndex(cell);
+                var occupancy = occupancyByIndex[idx];
+                if (occupancy.component != component) continue;
+
+                occupancy.component = null;
+                occupancyByIndex[idx] = occupancy;
+                removedAny = true;
+            }
+
+            if (!removedAny) return false;
+
+            component.DestroyPortMarkers();
+            if (Application.isPlaying)
+                Destroy(component.gameObject);
+            else
+                DestroyImmediate(component.gameObject);
+
             return true;
         }
 

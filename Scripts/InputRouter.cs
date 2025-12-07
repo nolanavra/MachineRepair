@@ -78,6 +78,7 @@ namespace MachineRepair.Grid
         [SerializeField] private string primaryClickActionName = "PrimaryClick";
         [SerializeField] private string secondaryClickActionName = "SecondaryClick";
         [SerializeField] private string rotatePlacementActionName = "RotatePlacement";
+        [SerializeField] private string deleteSelectionActionName = "DeleteSelection";
 
         [Header("Debugging")]
         [SerializeField] private bool logInputEvents = false;
@@ -86,6 +87,7 @@ namespace MachineRepair.Grid
         private InputAction primaryClickAction;
         private InputAction secondaryClickAction;
         private InputAction rotatePlacementAction;
+        private InputAction deleteSelectionAction;
         private Vector2 pointerScreenPosition;
         private Vector2 lastLoggedPointerScreenPosition = new Vector2(float.NaN, float.NaN);
 
@@ -440,6 +442,27 @@ namespace MachineRepair.Grid
             SelectionChanged?.Invoke(CurrentSelection);
         }
 
+        private void RemoveSelectedComponentFromGrid()
+        {
+            if (grid == null || inventory == null) return;
+            if (!CurrentSelection.hasSelection || CurrentSelection.target != CellSelectionTarget.Component) return;
+
+            MachineComponent component = CurrentSelection.cellData.component;
+            if (component == null) return;
+
+            bool removed = grid.RemoveComponent(component);
+            if (!removed) return;
+
+            ReturnComponentToInventory(component);
+            ClearSelection();
+        }
+
+        private void ReturnComponentToInventory(MachineComponent component)
+        {
+            if (component?.def == null || inventory == null) return;
+            inventory.AddItem(component.def.defName, 1);
+        }
+
         // ----------------- Mouse helpers -----------------
 
         // Returns mouse position on grid
@@ -783,6 +806,11 @@ namespace MachineRepair.Grid
             GameModeManager.Instance?.SetMode(GameMode.Selection);
         }
 
+        public void DeselectPlacementAndReturnToInventory()
+        {
+            CancelPlacement(returnItemToInventory: true);
+        }
+
         private void ExitPlacementMode()
         {
             ResetPlacementState(returnItem: false);
@@ -842,6 +870,7 @@ namespace MachineRepair.Grid
             primaryClickAction = map.FindAction(primaryClickActionName, throwIfNotFound: false);
             secondaryClickAction = map.FindAction(secondaryClickActionName, throwIfNotFound: false);
             rotatePlacementAction = map.FindAction(rotatePlacementActionName, throwIfNotFound: false);
+            deleteSelectionAction = map.FindAction(deleteSelectionActionName, throwIfNotFound: false);
         }
 
         private void EnableInputActions()
@@ -870,6 +899,12 @@ namespace MachineRepair.Grid
                 rotatePlacementAction.performed += OnRotatePlacementPerformed;
                 rotatePlacementAction.Enable();
             }
+
+            if (deleteSelectionAction != null)
+            {
+                deleteSelectionAction.performed += OnDeleteSelectionPerformed;
+                deleteSelectionAction.Enable();
+            }
         }
 
         private void DisableInputActions()
@@ -897,6 +932,12 @@ namespace MachineRepair.Grid
             {
                 rotatePlacementAction.performed -= OnRotatePlacementPerformed;
                 rotatePlacementAction.Disable();
+            }
+
+            if (deleteSelectionAction != null)
+            {
+                deleteSelectionAction.performed -= OnDeleteSelectionPerformed;
+                deleteSelectionAction.Disable();
             }
         }
 
@@ -944,6 +985,13 @@ namespace MachineRepair.Grid
             if (!ctx.performed) return;
             HandlePlacementRotation();
             LogInputEvent($"Rotate placement input; new rotation index {currentRotation}");
+        }
+
+        private void OnDeleteSelectionPerformed(InputAction.CallbackContext ctx)
+        {
+            if (!ctx.performed) return;
+            RemoveSelectedComponentFromGrid();
+            LogInputEvent("Delete selection input");
         }
 
         private void MaybeLogPointerChange(Vector2 screenPosition)
