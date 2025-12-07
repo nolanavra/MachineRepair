@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 /// <summary>
 /// Drop this on a GameObject (e.g. "GameController").
@@ -186,6 +187,55 @@ public class Inventory : MonoBehaviour
 
     /// Read-only access to slots for UI, etc.
     public IReadOnlyList<ItemStack> GetSlots() => slots;
+
+    /// <summary>
+    /// Populate an inventory slot prefab with the item's icon and the current total quantity in the inventory.
+    /// Intended for lightweight UI setups that only need to show the overall count for a given item id.
+    /// </summary>
+    /// <param name="slotPrefab">Prefab instance containing an Image (icon) and Text (count) child.</param>
+    /// <param name="itemId">ThingDef id to display.</param>
+    public void PopulateSlotPrefab(GameObject slotPrefab, string itemId)
+    {
+        if (slotPrefab == null)
+        {
+            Debug.LogWarning("Inventory: Cannot populate a null slot prefab.");
+            return;
+        }
+
+        ThingDef def = GetDef(itemId);
+        if (def == null)
+        {
+            Debug.LogWarning($"Inventory: No ThingDef found for id '{itemId}'.");
+            return;
+        }
+
+        Image icon = null;
+        Text countText = null;
+
+        foreach (var img in slotPrefab.GetComponentsInChildren<Image>(includeInactive: true))
+        {
+            if (icon == null && img.gameObject.name.ToLower().Contains("icon"))
+                icon = img;
+        }
+
+        foreach (var txt in slotPrefab.GetComponentsInChildren<Text>(includeInactive: true))
+        {
+            if (countText == null && txt.gameObject.name.ToLower().Contains("count"))
+                countText = txt;
+        }
+
+        if (icon != null)
+        {
+            icon.sprite = def.icon;
+            icon.color = def.icon != null ? Color.white : new Color(1f, 1f, 1f, 0f);
+        }
+
+        if (countText != null)
+        {
+            int quantity = GetTotalCount(itemId);
+            countText.text = quantity.ToString();
+        }
+    }
 
     /// <summary>
     /// Consume a single item from the given slot. Returns false if the slot is empty or invalid.
