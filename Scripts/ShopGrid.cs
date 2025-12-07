@@ -563,14 +563,47 @@ namespace MachineRepair.Grid
 
         public bool AddWireRun(IEnumerable<Vector2Int> cells, PlacedWire wire)
         {
-            if (wire == null) return false;
+            if (cells == null || wire == null) return false;
+
+            bool IsPortCell(Vector2Int cell, MachineComponent component)
+            {
+                if (component == null) return false;
+
+                bool isStart = component == wire.startComponent && cell == wire.startPortCell;
+                bool isEnd = component == wire.endComponent && cell == wire.endPortCell;
+
+                return isStart || isEnd;
+            }
 
             foreach (var c in cells)
             {
-                if (!InBounds(c.x, c.y)) return false;
+                if (!InBounds(c.x, c.y))
+                {
+                    Debug.LogWarning($"AddWireRun failed: cell {c} out of bounds.");
+                    return false;
+                }
+
                 int idx = ToIndex(c);
-                if (terrainByIndex[idx].placeability == CellPlaceability.Blocked) return false;
-                if (occupancyByIndex[idx].HasComponent) return false;
+                var terrain = terrainByIndex[idx];
+                var occupancy = occupancyByIndex[idx];
+
+                if (terrain.placeability == CellPlaceability.Blocked)
+                {
+                    Debug.LogWarning($"AddWireRun failed: cell {c} is blocked.");
+                    return false;
+                }
+
+                if (occupancy.HasWire && occupancy.wire != wire)
+                {
+                    Debug.LogWarning($"AddWireRun failed: cell {c} already has a different wire.");
+                    return false;
+                }
+
+                if (occupancy.HasComponent && !IsPortCell(c, occupancy.component))
+                {
+                    Debug.LogWarning($"AddWireRun failed: cell {c} contains unrelated component '{occupancy.component.name}'.");
+                    return false;
+                }
             }
 
             bool placedAny = false;
