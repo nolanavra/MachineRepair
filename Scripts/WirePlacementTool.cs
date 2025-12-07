@@ -137,6 +137,14 @@ namespace MachineRepair
         }
 
         /// <summary>
+        /// Changes the wire type used for future placements.
+        /// </summary>
+        public void SetWireType(WireType type)
+        {
+            wireType = type;
+        }
+
+        /// <summary>
         /// Returns true when the cell represents a valid wire connection port (power or signal).
         /// </summary>
         private bool IsWirePortCell(Vector2Int cellPos, cellDef cell)
