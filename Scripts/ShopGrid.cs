@@ -44,6 +44,14 @@ namespace MachineRepair.Grid
         [SerializeField] private ThingDef chassisWaterConnectionDef;
         [SerializeField] private GameObject componentPrefab;
 
+        [Header("Port Markers")]
+        [SerializeField] private Sprite portMarkerSprite;
+        [SerializeField] private string portMarkerSortingLayer = "Default";
+        [SerializeField] private int portMarkerSortingOrder = 950;
+        [SerializeField] private Color portMarkerPowerColor = new Color(0.95f, 0.3f, 0.3f, 0.9f);
+        [SerializeField] private Color portMarkerWaterColor = new Color(0.25f, 0.55f, 1f, 0.9f);
+        [SerializeField] private Color portMarkerSignalColor = new Color(0.75f, 0.45f, 0.95f, 0.9f);
+
         public int CellCount => width * height;
         public bool setup = false;
 
@@ -155,7 +163,10 @@ namespace MachineRepair.Grid
                 if (def == null) continue;
 
                 var component = CreateComponentInstance(def, gridCell);
-                TryPlaceComponent(gridCell, component);
+                if (TryPlaceComponent(gridCell, component))
+                {
+                    ApplyPortMarkers(component);
+                }
             }
         }
 
@@ -190,7 +201,22 @@ namespace MachineRepair.Grid
             spriteRenderer.color = Color.white;
             spriteRenderer.sortingOrder = def.placedSortingOrder;
 
+            ApplyPortMarkers(machine);
+
             return machine;
+        }
+
+        public void ApplyPortMarkers(MachineComponent machine)
+        {
+            if (machine == null) return;
+            machine.RefreshPortMarkers(
+                this,
+                portMarkerSprite,
+                portMarkerSortingLayer,
+                portMarkerSortingOrder,
+                portMarkerPowerColor,
+                portMarkerWaterColor,
+                portMarkerSignalColor);
         }
 
         public void UpdateSubGrid()
@@ -407,6 +433,7 @@ namespace MachineRepair.Grid
             var occupancy = occupancyByIndex[i];
             if (!occupancy.HasComponent) return false;
 
+            occupancy.component?.DestroyPortMarkers();
             occupancy.component = null;
             occupancyByIndex[i] = occupancy;
             return true;

@@ -286,6 +286,11 @@ namespace MachineRepair.Grid
                 grid.TryPlaceComponent(target, machine, markTerrainConnectorsOnly: true);
             }
 
+            if (grid != null)
+            {
+                grid.ApplyPortMarkers(machine);
+            }
+
             ExitPlacementMode();
         }
 
