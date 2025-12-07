@@ -309,8 +309,12 @@ namespace MachineRepair
                     // For now, mirror propagated electrical values into any wires located in the same cell.
                     if (cell.HasWire)
                     {
-                        cell.wire.voltage = voltageGraph[idx];
-                        cell.wire.current = currentGraph[idx];
+                        foreach (var wire in cell.Wires)
+                        {
+                            if (wire == null) continue;
+                            wire.voltage = voltageGraph[idx];
+                            wire.current = currentGraph[idx];
+                        }
                     }
                 }
             }
@@ -338,9 +342,17 @@ namespace MachineRepair
                         }
                     }
 
-                    if (cell.HasWire && cell.wire.EvaluateDamage(maxCurrent: 20f, maxResistance: 10f))
+                    if (cell.HasWire)
                     {
-                        faultLog.Add($"Wire damaged near {x},{y}");
+                        foreach (var wire in cell.Wires)
+                        {
+                            if (wire == null) continue;
+                            if (wire.EvaluateDamage(maxCurrent: 20f, maxResistance: 10f))
+                            {
+                                faultLog.Add($"Wire damaged near {x},{y}");
+                                break;
+                            }
+                        }
                     }
                 }
             }

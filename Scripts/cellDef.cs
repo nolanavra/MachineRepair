@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using MachineRepair;
 
@@ -14,19 +16,30 @@ namespace MachineRepair.Grid
     public struct CellOccupancy
     {
         public MachineComponent component;    // machine / fixture
-        public PlacedWire wire;               // electrical
-        public WireDef wireDef;               // wire definition
+        public List<PlacedWire> wires;        // electrical (supports multiple runs)
         public bool pipe;                     // plumbing
 
         public bool HasComponent => component != null;
-        public bool HasWire => wire != null;
+        public bool HasWire => wires != null && wires.Count > 0;
         public bool HasPipe => pipe;
+        public PlacedWire PrimaryWire => HasWire ? wires[0] : null;
+        public WireDef PrimaryWireDef => PrimaryWire != null ? PrimaryWire.wireDef : null;
+        public IReadOnlyList<PlacedWire> Wires => wires ?? Array.Empty<PlacedWire>();
+
+        public void AddWire(PlacedWire wire)
+        {
+            if (wire == null) return;
+            wires ??= new List<PlacedWire>();
+            if (!wires.Contains(wire))
+            {
+                wires.Add(wire);
+            }
+        }
 
         public void Clear()
         {
             component = null;
-            wire = null;
-            wireDef = null;
+            wires = null;
             pipe = false;
         }
     }
@@ -39,14 +52,21 @@ namespace MachineRepair.Grid
 
         // Contents of the cell:
         public MachineComponent component;    // machine / fixture
-        public PlacedWire wire;               // placed wire data
-        public WireDef wireDef;               // wire definition data
+        public List<PlacedWire> wires;        // placed wire data
         public bool pipe;                     // plumbing
 
         // Convenience helpers
         public bool HasComponent => component != null;
-        public bool HasWire => wire != null;
+        public bool HasWire => wires != null && wires.Count > 0;
         public bool HasPipe => pipe;
+        public PlacedWire PrimaryWire => HasWire ? wires[0] : null;
+        public WireDef PrimaryWireDef => PrimaryWire != null ? PrimaryWire.wireDef : null;
+
+        public PlacedWire GetWireAt(int index)
+        {
+            if (!HasWire || index < 0 || index >= wires.Count) return null;
+            return wires[index];
+        }
 
         public static cellDef From(CellTerrain terrain, CellOccupancy occupancy)
         {
@@ -55,8 +75,7 @@ namespace MachineRepair.Grid
                 index = terrain.index,
                 placeability = terrain.placeability,
                 component = occupancy.component,
-                wire = occupancy.wire,
-                wireDef = occupancy.wireDef,
+                wires = occupancy.HasWire ? new List<PlacedWire>(occupancy.Wires) : null,
                 pipe = occupancy.pipe
             };
         }

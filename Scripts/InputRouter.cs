@@ -27,6 +27,8 @@ namespace MachineRepair.Grid
             public Vector2Int cell;
             public cellDef cellData;
             public CellSelectionTarget target;
+            public int wireIndex;
+            public int pipeIndex;
         }
 
         public event Action<SelectionInfo> SelectionChanged;
@@ -68,9 +70,25 @@ namespace MachineRepair.Grid
         private readonly List<SpriteRenderer> footprintHighlights = new();
 
         private int selectionCycleIndex;
-        private readonly List<CellSelectionTarget> selectionCycleOrder = new();
+        private readonly List<SelectionEntry> selectionCycleOrder = new();
         private Vector2Int selectedCell = new Vector2Int(int.MinValue, int.MinValue);
-        private CellSelectionTarget selectedTarget = CellSelectionTarget.None;
+        private SelectionEntry selectedTarget = SelectionEntry.None;
+
+        private readonly struct SelectionEntry
+        {
+            public readonly CellSelectionTarget target;
+            public readonly int wireIndex;
+            public readonly int pipeIndex;
+
+            public SelectionEntry(CellSelectionTarget target, int wireIndex = -1, int pipeIndex = -1)
+            {
+                this.target = target;
+                this.wireIndex = wireIndex;
+                this.pipeIndex = pipeIndex;
+            }
+
+            public static SelectionEntry None => new SelectionEntry(CellSelectionTarget.None);
+        }
 
         [Header("Input (Gameplay Map)")]
         [SerializeField] private string gameplayMapName = "Gameplay";
@@ -249,7 +267,7 @@ namespace MachineRepair.Grid
             selectionCycleOrder.AddRange(targets);
 
             selectedCell = cellPos;
-            selectedTarget = targets.Count > 0 ? targets[selectionCycleIndex] : CellSelectionTarget.None;
+            selectedTarget = targets.Count > 0 ? targets[selectionCycleIndex] : SelectionEntry.None;
 
             ApplySelection(cellPos, cell, selectedTarget);
         }
@@ -408,25 +426,33 @@ namespace MachineRepair.Grid
             return EventSystem.current.IsPointerOverGameObject();
         }
 
-        private List<CellSelectionTarget> BuildSelectionTargets(cellDef cell)
+        private List<SelectionEntry> BuildSelectionTargets(cellDef cell)
         {
-            var targets = new List<CellSelectionTarget>();
+            var targets = new List<SelectionEntry>();
 
-            if (cell.HasComponent) targets.Add(CellSelectionTarget.Component);
-            if (cell.HasPipe) targets.Add(CellSelectionTarget.Pipe);
-            if (cell.HasWire) targets.Add(CellSelectionTarget.Wire);
+            if (cell.HasComponent) targets.Add(new SelectionEntry(CellSelectionTarget.Component));
+            if (cell.HasPipe) targets.Add(new SelectionEntry(CellSelectionTarget.Pipe, pipeIndex: 0));
+            if (cell.HasWire)
+            {
+                for (int i = 0; i < cell.Wires.Count; i++)
+                {
+                    targets.Add(new SelectionEntry(CellSelectionTarget.Wire, wireIndex: i));
+                }
+            }
 
             return targets;
         }
 
-        private void ApplySelection(Vector2Int cellPos, cellDef cell, CellSelectionTarget target)
+        private void ApplySelection(Vector2Int cellPos, cellDef cell, SelectionEntry target)
         {
             CurrentSelection = new SelectionInfo
             {
-                hasSelection = target != CellSelectionTarget.None,
+                hasSelection = target.target != CellSelectionTarget.None,
                 cell = cellPos,
                 cellData = cell,
-                target = target
+                target = target.target,
+                wireIndex = target.wireIndex,
+                pipeIndex = target.pipeIndex
             };
 
             SelectionChanged?.Invoke(CurrentSelection);
@@ -437,7 +463,7 @@ namespace MachineRepair.Grid
             selectionCycleIndex = 0;
             selectionCycleOrder.Clear();
             selectedCell = new Vector2Int(int.MinValue, int.MinValue);
-            selectedTarget = CellSelectionTarget.None;
+            selectedTarget = SelectionEntry.None;
             CurrentSelection = new SelectionInfo { hasSelection = false };
             SelectionChanged?.Invoke(CurrentSelection);
         }

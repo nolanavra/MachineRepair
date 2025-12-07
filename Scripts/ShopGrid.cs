@@ -593,12 +593,6 @@ namespace MachineRepair.Grid
                     return false;
                 }
 
-                if (occupancy.HasWire && occupancy.wire != wire)
-                {
-                    Debug.LogWarning($"AddWireRun failed: cell {c} already has a different wire.");
-                    return false;
-                }
-
                 if (occupancy.HasComponent && !IsPortCell(c, occupancy.component))
                 {
                     Debug.LogWarning($"AddWireRun failed: cell {c} contains unrelated component '{occupancy.component.name}'.");
@@ -611,8 +605,7 @@ namespace MachineRepair.Grid
             {
                 int idx = ToIndex(c);
                 var occupancy = occupancyByIndex[idx];
-                occupancy.wire = wire;
-                occupancy.wireDef = wire.wireDef;
+                occupancy.AddWire(wire);
                 occupancyByIndex[idx] = occupancy;
                 placedAny = true;
             }

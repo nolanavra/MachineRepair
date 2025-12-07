@@ -104,12 +104,13 @@ public class InspectorUI : MonoBehaviour
 
         private void PresentWire(InputRouter.SelectionInfo selection)
         {
-            WireType wireType = selection.cellData.wire != null ? selection.cellData.wire.wireType : WireType.None;
+            var wire = selection.cellData.GetWireAt(selection.wireIndex);
+            WireType wireType = wire != null ? wire.wireType : WireType.None;
             string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
             SetTitle(wireLabel);
             SetDescription("Carries electrical or signal connections between components.");
-            SetConnections(BuildWireConnectionSummary(selection.cell));
-            SetParameters(BuildWireParameters(selection.cellData));
+            SetConnections(BuildWireConnectionSummary(selection.cell, selection.wireIndex));
+            SetParameters(BuildWireParameters(selection.cellData, selection.wireIndex));
         }
 
     private void PresentEmpty(InputRouter.SelectionInfo selection)
@@ -195,10 +196,10 @@ public class InspectorUI : MonoBehaviour
         }
     }
 
-    private string BuildWireConnectionSummary(Vector2Int cell)
+    private string BuildWireConnectionSummary(Vector2Int cell, int wireIndex)
     {
         if (wireTool == null) return BuildConnectionSummary(cell);
-        if (!wireTool.TryGetConnection(cell, out var connection))
+        if (!wireTool.TryGetConnection(cell, wireIndex, out var connection))
             return "Wire is not connected between power ports.";
 
         string startName = ResolveComponentName(connection.startComponent);
@@ -217,16 +218,17 @@ public class InspectorUI : MonoBehaviour
         return $"{typeLabel} connection: {startLabel} to {endLabel}.";
     }
 
-    private string BuildWireParameters(cellDef cell)
+    private string BuildWireParameters(cellDef cell, int wireIndex)
     {
-        if (cell.wireDef == null)
+        var wire = cell.GetWireAt(wireIndex);
+        if (wire == null || wire.wireDef == null)
             return "No simulation parameters for wires.";
 
         var sb = new StringBuilder();
         sb.AppendLine("Wire Parameters:");
-        string kind = cell.wireDef.wireType == WireType.Signal ? "Signal" : "Power";
+        string kind = wire.wireDef.wireType == WireType.Signal ? "Signal" : "Power";
         sb.AppendLine($"- Kind: {kind}");
-        sb.AppendLine($"- Max Current: {cell.wireDef.maxCurrent} A");
+        sb.AppendLine($"- Max Current: {wire.wireDef.maxCurrent} A");
 
         return sb.ToString();
     }
