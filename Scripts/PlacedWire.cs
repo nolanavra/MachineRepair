@@ -13,6 +13,7 @@ namespace MachineRepair
     {
         [Header("Connections")]
         public WireType wireType;
+        public WireDef wireDef;
         public MachineComponent startComponent;
         public MachineComponent endComponent;
         public Vector2Int startPortCell;
