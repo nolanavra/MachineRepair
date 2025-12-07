@@ -24,7 +24,7 @@ namespace MachineRepair.Grid
         public bool HasPipe => pipe;
         public PlacedWire PrimaryWire => HasWire ? wires[0] : null;
         public WireDef PrimaryWireDef => PrimaryWire != null ? PrimaryWire.wireDef : null;
-        public IReadOnlyList<PlacedWire> Wires => wires ?? Array.Empty<PlacedWire>();
+        public IReadOnlyList<PlacedWire> Wires => wires != null ? (IReadOnlyList<PlacedWire>)wires : Array.Empty<PlacedWire>();
 
         public void AddWire(PlacedWire wire)
         {
@@ -61,6 +61,7 @@ namespace MachineRepair.Grid
         public bool HasPipe => pipe;
         public PlacedWire PrimaryWire => HasWire ? wires[0] : null;
         public WireDef PrimaryWireDef => PrimaryWire != null ? PrimaryWire.wireDef : null;
+        public IReadOnlyList<PlacedWire> Wires => wires != null ? (IReadOnlyList<PlacedWire>)wires : Array.Empty<PlacedWire>();
 
         public PlacedWire GetWireAt(int index)
         {
