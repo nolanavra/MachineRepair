@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using MachineRepair.Grid;
 using UnityEngine;
@@ -34,6 +35,7 @@ public class SimpleInventoryUI : MonoBehaviour
 
     private readonly List<GameObject> slotInstances = new List<GameObject>();
     private int draggingSlotIndex = -1;
+    private bool refreshQueuedFromDrag;
     private InputAction toggleAction;
 
     private void Reset()
@@ -118,7 +120,7 @@ public class SimpleInventoryUI : MonoBehaviour
         for (int i = 0; i < slotInstances.Count; i++)
         {
             if (slotInstances[i] != null)
-                DestroyImmediate(slotInstances[i]);
+                Destroy(slotInstances[i]);
         }
         slotInstances.Clear();
     }
@@ -153,14 +155,24 @@ public class SimpleInventoryUI : MonoBehaviour
         if (draggingSlotIndex < 0 || draggingSlotIndex == targetIndex) return;
 
         if (inventory.SwapSlots(draggingSlotIndex, targetIndex))
-            RefreshUI();
-
-        draggingSlotIndex = -1;
+            refreshQueuedFromDrag = true;
     }
 
     internal void EndSlotDrag()
     {
         draggingSlotIndex = -1;
+
+        if (refreshQueuedFromDrag)
+        {
+            refreshQueuedFromDrag = false;
+            StartCoroutine(RefreshAfterDrag());
+        }
+    }
+
+    private IEnumerator RefreshAfterDrag()
+    {
+        yield return new WaitForEndOfFrame();
+        RefreshUI();
     }
 
     private void CacheInputActions()
