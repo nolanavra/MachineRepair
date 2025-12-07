@@ -283,7 +283,7 @@ namespace MachineRepair.Grid
             for (int i = 0; i < footprintCells.Count; i++)
             {
                 var target = footprintCells[i];
-                grid.TryPlaceComponent(target, machine);
+                grid.TryPlaceComponent(target, machine, markTerrainConnectorsOnly: true);
             }
 
             ExitPlacementMode();
