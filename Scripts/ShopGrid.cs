@@ -162,12 +162,69 @@ namespace MachineRepair.Grid
 
                 if (def == null) continue;
 
+                var footprintCells = GetFootprintCells(gridCell, def.footprint);
+                if (!IsFootprintPlaceable(footprintCells)) continue;
+
                 var component = CreateComponentInstance(def, gridCell);
-                if (TryPlaceComponent(gridCell, component))
+                if (TryPlaceComponentFootprint(component, footprintCells))
                 {
                     ApplyPortMarkers(component);
                 }
             }
+        }
+
+        private bool TryPlaceComponentFootprint(MachineComponent component, IReadOnlyList<Vector2Int> cells)
+        {
+            if (component == null || cells == null || cells.Count == 0) return false;
+
+            for (int i = 0; i < cells.Count; i++)
+            {
+                if (!TryPlaceComponent(cells[i], component, markTerrainConnectorsOnly: true))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsFootprintPlaceable(IReadOnlyList<Vector2Int> cells)
+        {
+            if (cells == null || cells.Count == 0) return false;
+
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var c = cells[i];
+                if (!InBounds(c.x, c.y)) return false;
+
+                int idx = ToIndex(c);
+                var terrain = terrainByIndex[idx];
+                if (terrain.placeability == CellPlaceability.Blocked || terrain.placeability == CellPlaceability.ConnectorsOnly)
+                    return false;
+
+                if (occupancyByIndex[idx].HasComponent)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private List<Vector2Int> GetFootprintCells(Vector2Int anchorCell, FootprintMask footprint)
+        {
+            var cells = new List<Vector2Int>();
+
+            for (int y = 0; y < footprint.height; y++)
+            {
+                for (int x = 0; x < footprint.width; x++)
+                {
+                    if (!footprint.occupied[y * footprint.width + x]) continue;
+
+                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
+                    cells.Add(anchorCell + local);
+                }
+            }
+
+            return cells;
         }
 
         private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell)
