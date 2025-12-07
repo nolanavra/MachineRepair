@@ -645,7 +645,9 @@ namespace MachineRepair.Grid
                 Vector2Int c = cells[i];
                 if (!grid.InBounds(c.x, c.y)) return false;
                 var cell = grid.GetCell(c);
-                if (cell.placeability == CellPlaceability.Blocked) return false;
+                if (cell.placeability == CellPlaceability.Blocked ||
+                    cell.placeability == CellPlaceability.ConnectorsOnly)
+                    return false;
                 if (cell.HasComponent) return false;
             }
             return true;
