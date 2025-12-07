@@ -52,7 +52,7 @@ namespace MachineRepair
         private LineRenderer activePreview;
         private readonly List<LineRenderer> placedWires = new();
         private readonly List<WireConnectionInfo> connections = new();
-        private readonly Dictionary<Vector2Int, WireConnectionInfo> connectionByCell = new();
+        private readonly Dictionary<Vector2Int, List<WireConnectionInfo>> connectionByCell = new();
         private Vector2Int? startCell;
         private InputAction pointAction;
         private Vector2 pointerScreenPosition;
@@ -288,6 +288,18 @@ namespace MachineRepair
 
         private List<Vector2Int> FindPath(Vector2Int start, Vector2Int goal)
         {
+            var shortest = FindPathInternal(start, goal, avoidExistingRuns: false);
+            if (shortest.Count == 0) return shortest;
+
+            var avoidRuns = FindPathInternal(start, goal, avoidExistingRuns: true);
+            if (avoidRuns.Count == 0) return shortest;
+
+            float threshold = shortest.Count * 1.5f;
+            return avoidRuns.Count <= threshold ? avoidRuns : shortest;
+        }
+
+        private List<Vector2Int> FindPathInternal(Vector2Int start, Vector2Int goal, bool avoidExistingRuns)
+        {
             var result = new List<Vector2Int>();
             if (start == goal)
             {
@@ -314,34 +326,12 @@ namespace MachineRepair
 
                 foreach (var dir in dirs)
                 {
-                    var next = current + dir;
-                    if (!grid.InBounds(next.x, next.y)) continue;
-                    if (cameFrom.ContainsKey(next)) continue;
-                    if (!grid.TryGetCell(next, out var nextCell)) continue;
-
-                    bool isGoal = next == goal;
-                    bool blockedByComponent = nextCell.HasComponent && !isGoal && next != start;
-                    bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
-                    if (blockedByComponent || blockedByPlaceability) continue;
-
-                    frontier.Enqueue(next);
-                    cameFrom[next] = current;
+                    TryEnqueueNeighbor(start, goal, avoidExistingRuns, cameFrom, frontier, current, current + dir);
                 }
 
                 foreach (var diag in diagonals)
                 {
-                    var next = current + diag;
-                    if (!grid.InBounds(next.x, next.y)) continue;
-                    if (cameFrom.ContainsKey(next)) continue;
-                    if (!grid.TryGetCell(next, out var nextCell)) continue;
-
-                    bool isGoal = next == goal;
-                    bool blockedByComponent = nextCell.HasComponent && !isGoal && next != start;
-                    bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
-                    if (blockedByComponent || blockedByPlaceability) continue;
-
-                    cameFrom[next] = current;
-                    frontier.Enqueue(next);
+                    TryEnqueueNeighbor(start, goal, avoidExistingRuns, cameFrom, frontier, current, current + diag);
                 }
             }
 
@@ -356,6 +346,33 @@ namespace MachineRepair
             }
 
             return result;
+        }
+
+        private void TryEnqueueNeighbor(
+            Vector2Int start,
+            Vector2Int goal,
+            bool avoidExistingRuns,
+            Dictionary<Vector2Int, Vector2Int> cameFrom,
+            Queue<Vector2Int> frontier,
+            Vector2Int current,
+            Vector2Int candidate)
+        {
+            if (!grid.InBounds(candidate.x, candidate.y)) return;
+            if (cameFrom.ContainsKey(candidate)) return;
+            if (!grid.TryGetCell(candidate, out var nextCell)) return;
+
+            bool isGoal = candidate == goal;
+            bool blockedByComponent = nextCell.HasComponent && !isGoal && candidate != start;
+            bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
+            if (blockedByComponent || blockedByPlaceability) return;
+
+            if (avoidExistingRuns && candidate != start && candidate != goal)
+            {
+                if (nextCell.HasWire || nextCell.HasPipe) return;
+            }
+
+            frontier.Enqueue(candidate);
+            cameFrom[candidate] = current;
         }
 
         private void ApplyWireToGrid(List<Vector2Int> path, PlacedWire placedWire)
@@ -399,7 +416,22 @@ namespace MachineRepair
         /// </summary>
         public bool TryGetConnection(Vector2Int cell, out WireConnectionInfo info)
         {
-            return connectionByCell.TryGetValue(cell, out info);
+            return TryGetConnection(cell, 0, out info);
+        }
+
+        public bool TryGetConnection(Vector2Int cell, int index, out WireConnectionInfo info)
+        {
+            info = default;
+            if (!connectionByCell.TryGetValue(cell, out var list)) return false;
+            if (index < 0 || index >= list.Count) return false;
+            info = list[index];
+            return true;
+        }
+
+        public int GetConnectionCount(Vector2Int cell)
+        {
+            if (!connectionByCell.TryGetValue(cell, out var list) || list == null) return 0;
+            return list.Count;
         }
 
         /// <summary>
@@ -451,7 +483,13 @@ namespace MachineRepair
             connections.Add(connection);
             foreach (var pos in path)
             {
-                connectionByCell[pos] = connection;
+                if (!connectionByCell.TryGetValue(pos, out var list) || list == null)
+                {
+                    list = new List<WireConnectionInfo>();
+                    connectionByCell[pos] = list;
+                }
+
+                list.Add(connection);
             }
 
             RegisterComponentConnections(connection);
