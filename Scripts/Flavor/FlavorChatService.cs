@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Espresso
+namespace MachineRepair.Flavor
 {
     public class FlavorChatService : MonoBehaviour
     {
@@ -165,7 +165,7 @@ namespace Espresso
             _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
             if (chosen.oncePerSession) _shownThisSession.Add(chosen);
 
-            if (verbose) Debug.Log($"[FlavorChatService] Emitted: “{text}”");
+            if (verbose) Debug.Log($"[FlavorChatService] Emitted: {text}");
         }
 
         // ----------------- Helpers defined in THIS CLASS -----------------

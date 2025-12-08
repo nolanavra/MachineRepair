@@ -1,11 +1,11 @@
 
 using UnityEngine;
 
-namespace Espresso
+namespace MachineRepair.Flavor
 {
     public enum FlavorModeReq { Any, Inspect, Place }
 
-    [CreateAssetMenu(menuName = "Espresso/Flavor/Line", fileName = "FlavorLine")]
+    [CreateAssetMenu(menuName = "MachineRepair/Flavor/Line", fileName = "FlavorLine")]
     public class FlavorLine : ScriptableObject
     {
         [TextArea(2, 5)]

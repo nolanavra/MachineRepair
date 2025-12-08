@@ -1,5 +1,5 @@
 
-namespace Espresso
+namespace MachineRepair.Flavor
 {
     public struct FlavorContext
     {

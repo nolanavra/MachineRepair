@@ -1,7 +1,7 @@
 
 using UnityEngine;
 
-namespace Espresso
+namespace MachineRepair.Flavor
 {
     public class DefaultFlavorContextSource : MonoBehaviour, IFlavorContextSource
     {

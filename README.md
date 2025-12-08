@@ -73,3 +73,7 @@ This repository contains a Unity 2D prototype for wiring up an espresso-machine 
 - Most components auto-discover references (PlayerInput, GridManager, Inventory) if left unassigned, but explicit inspector wiring makes scene setup deterministic.
 - All systems assume world-space coordinates match the Tilemap’s origin with Z = 0.
 - Keep UI canvases in Screen Space - Overlay or Screen Space - Camera; InputRouter blocks placement when the pointer is over UI if `blockWhenPointerOverUI` is enabled.
+
+## Flavor namespace migration
+- Flavor authoring scripts now live in the `MachineRepair.Flavor` namespace and expose Create Asset menu entries under `MachineRepair/Flavor/...`.
+- Existing assets should remain serialized because the script GUIDs are unchanged; if a scene loses a reference, reimport the Flavor scripts or reassign the component once to refresh the binding.
