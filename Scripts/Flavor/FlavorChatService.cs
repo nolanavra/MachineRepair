@@ -18,7 +18,7 @@ namespace MachineRepair.Flavor
         [Min(1f)] public float bubbleLifetime = 6f;
 
         [Header("Customer Visuals")]
-        public List<Sprite> customerSprites = new();
+        public List<CustomerPortraitProfile> portraitProfiles = new();
         public CameraGridFocusController cameraFocusController;
 
         [Header("Timing (minutes)")]
@@ -145,7 +145,7 @@ namespace MachineRepair.Flavor
             if (candidates.Count == 0)
             {
                 if (forced)
-                    SpawnBubble("[debug] Forced emit: no candidates matched.", PickCustomerSprite());
+                    SpawnBubble("[debug] Forced emit: no candidates matched.", PickCustomerSprite(null));
                 return;
             }
 
@@ -166,7 +166,7 @@ namespace MachineRepair.Flavor
             }
 
             string text = FillTemplate(chosen.template, ctx);
-            SpawnBubble(text, PickCustomerSprite());
+            SpawnBubble(text, PickCustomerSprite(chosen));
 
             _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
             if (chosen.oncePerSession) _shownThisSession.Add(chosen);
@@ -238,16 +238,71 @@ namespace MachineRepair.Flavor
             ui.Play(bubbleLifetime);
         }
 
-        Sprite PickCustomerSprite()
+        Sprite PickCustomerSprite(FlavorLine chosenLine)
         {
-            if (customerSprites == null || customerSprites.Count == 0)
+            if (portraitProfiles == null || portraitProfiles.Count == 0)
                 return null;
 
             if (cameraFocusController == null)
                 return null;
 
-            int idx = Random.Range(0, customerSprites.Count);
-            return customerSprites[idx];
+            var matches = new List<(CustomerPortraitProfile profile, int weight)>();
+            var generalProfiles = new List<(CustomerPortraitProfile profile, int weight)>();
+
+            foreach (var profile in portraitProfiles)
+            {
+                if (profile == null || profile.sprite == null || profile.tags == null)
+                    continue;
+
+                int overlapWeight = 0;
+                int generalWeight = 0;
+
+                foreach (var tagWeight in profile.tags)
+                {
+                    if (tagWeight == null) continue;
+
+                    if (tagWeight.tag == FlavorContextTag.General)
+                    {
+                        generalWeight += Mathf.Max(1, tagWeight.weight);
+                    }
+
+                    if (chosenLine?.tags == null) continue;
+
+                    foreach (var lineTag in chosenLine.tags)
+                    {
+                        if (lineTag == null) continue;
+                        if (lineTag.tag != tagWeight.tag) continue;
+
+                        overlapWeight += Mathf.Max(1, lineTag.weight) * Mathf.Max(1, tagWeight.weight);
+                    }
+                }
+
+                if (overlapWeight > 0)
+                {
+                    matches.Add((profile, overlapWeight));
+                }
+                else if (generalWeight > 0)
+                {
+                    generalProfiles.Add((profile, generalWeight));
+                }
+            }
+
+            var pool = matches.Count > 0 ? matches : generalProfiles;
+            if (pool.Count == 0)
+                return null;
+
+            int sum = 0;
+            foreach (var entry in pool) sum += entry.weight;
+
+            int pick = Random.Range(0, sum);
+            foreach (var entry in pool)
+            {
+                if (pick < entry.weight)
+                    return entry.profile.sprite;
+                pick -= entry.weight;
+            }
+
+            return pool[0].profile.sprite; // fallback
         }
 
         RectTransform ResolveBubbleParent()
