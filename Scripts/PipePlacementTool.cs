@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MachineRepair.Grid;
+using MachineRepair.Pathing;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -42,6 +43,22 @@ namespace MachineRepair
             }
         }
 
+        private readonly struct DebugCandidate
+        {
+            public readonly Vector2Int From;
+            public readonly Vector2Int To;
+            public readonly bool Accepted;
+            public readonly string Reason;
+
+            public DebugCandidate(Vector2Int from, Vector2Int to, bool accepted, string reason)
+            {
+                From = from;
+                To = to;
+                Accepted = accepted;
+                Reason = reason;
+            }
+        }
+
         [Header("References")]
         [SerializeField] private GridManager grid;
         [SerializeField] private Camera cameraOverride;
@@ -76,6 +93,11 @@ namespace MachineRepair
         public event Action<Vector2Int> PreviewStarted;
         public event Action PreviewCancelled;
         public event Action<PlacedPipe> PipePlaced;
+
+        [Header("Debugging")]
+        [SerializeField] private bool drawPathingDebug;
+
+        private readonly List<DebugCandidate> debugCandidates = new();
 
         private void Awake()
         {
@@ -321,6 +343,7 @@ namespace MachineRepair
         private List<Vector2Int> FindPathInternal(Vector2Int start, Vector2Int goal, bool avoidExistingRuns)
         {
             var result = new List<Vector2Int>();
+            if (drawPathingDebug) debugCandidates.Clear();
             if (start == goal)
             {
                 result.Add(start);
@@ -375,6 +398,12 @@ namespace MachineRepair
             return result;
         }
 
+        private void RecordDebugCandidate(Vector2Int from, Vector2Int to, bool accepted, string reason)
+        {
+            if (!drawPathingDebug) return;
+            debugCandidates.Add(new DebugCandidate(from, to, accepted, reason));
+        }
+
         private void TryEnqueueNeighbor(
             Vector2Int start,
             Vector2Int goal,
@@ -389,22 +418,31 @@ namespace MachineRepair
             if (!grid.TryGetCell(candidate, out var nextCell)) return;
 
             var direction = candidate - current.Position;
-            if (direction == Vector2Int.zero) return;
-
-            if (current.Direction != Vector2Int.zero)
+            if (direction == Vector2Int.zero)
             {
-                float angle = Vector2.Angle(current.Direction, direction);
-                if (angle > 0f && angle < MinTurnAngleDegrees) return;
+                RecordDebugCandidate(current.Position, candidate, false, "No movement");
+                return;
+            }
+            if (!PathEvaluation.IsTurnAllowed(current.Direction, direction, MinTurnAngleDegrees))
+            {
+                RecordDebugCandidate(current.Position, candidate, false, "Turn too sharp");
+                return;
             }
 
             bool isGoal = candidate == goal;
             bool blockedByComponent = nextCell.HasComponent && !isGoal && candidate != start;
             bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
-            if (blockedByComponent || blockedByPlaceability) return;
-
-            if (avoidExistingRuns && candidate != start && candidate != goal)
+            if (blockedByComponent || blockedByPlaceability)
             {
-                if (nextCell.HasPipe || nextCell.HasWire) return;
+                RecordDebugCandidate(current.Position, candidate, false, "Cell blocked");
+                return;
+            }
+
+            bool blockedByExistingRun = avoidExistingRuns && candidate != start && candidate != goal && (nextCell.HasPipe || nextCell.HasWire);
+            if (blockedByExistingRun)
+            {
+                RecordDebugCandidate(current.Position, candidate, false, "Existing run");
+                return;
             }
 
             var nextState = new PathState(candidate, direction);
@@ -413,6 +451,22 @@ namespace MachineRepair
             visited.Add(nextState);
             frontier.Enqueue(nextState);
             cameFrom[nextState] = current;
+            RecordDebugCandidate(current.Position, candidate, true, "Accepted");
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            if (!drawPathingDebug || debugCandidates.Count == 0 || grid == null) return;
+
+            foreach (var candidate in debugCandidates)
+            {
+                Gizmos.color = candidate.Accepted ? Color.green : Color.red;
+                var startWorld = grid.CellToWorld(candidate.From);
+                var endWorld = grid.CellToWorld(candidate.To);
+                startWorld.z = previewZOffset;
+                endWorld.z = previewZOffset;
+                Gizmos.DrawLine(startWorld, endWorld);
+            }
         }
 
         private bool ApplyPipeToGrid(List<Vector2Int> path, PlacedPipe placedPipe)
