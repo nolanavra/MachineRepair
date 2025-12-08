@@ -16,6 +16,10 @@ namespace MachineRepair.Flavor
         public RectTransform bubbleParent;
         [Min(1f)] public float bubbleLifetime = 6f;
 
+        [Header("Customer Visuals")]
+        public List<Sprite> customerSprites = new();
+        public CameraGridFocusController cameraFocusController;
+
         [Header("Timing (minutes)")]
         public Vector2 intervalMinutes = new Vector2(3f, 8f);
 
@@ -140,7 +144,7 @@ namespace MachineRepair.Flavor
             if (candidates.Count == 0)
             {
                 if (forced)
-                    SpawnBubble("[debug] Forced emit: no candidates matched.");
+                    SpawnBubble("[debug] Forced emit: no candidates matched.", PickCustomerSprite());
                 return;
             }
 
@@ -161,7 +165,7 @@ namespace MachineRepair.Flavor
             }
 
             string text = FillTemplate(chosen.template, ctx);
-            SpawnBubble(text);
+            SpawnBubble(text, PickCustomerSprite());
 
             _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
             if (chosen.oncePerSession) _shownThisSession.Add(chosen);
@@ -193,7 +197,7 @@ namespace MachineRepair.Flavor
             return s;
         }
 
-        void SpawnBubble(string text)
+        void SpawnBubble(string text, Sprite portrait = null)
         {
             if (bubblePrefab == null)
             {
@@ -210,7 +214,20 @@ namespace MachineRepair.Flavor
 
             var ui = Instantiate(bubblePrefab, parent); // parent is a scene RectTransform now
             ui.SetText(text);
+            ui.SetPortrait(portrait);
             ui.Play(bubbleLifetime);
+        }
+
+        Sprite PickCustomerSprite()
+        {
+            if (customerSprites == null || customerSprites.Count == 0)
+                return null;
+
+            if (cameraFocusController == null || !cameraFocusController.IsSubGridActive)
+                return null;
+
+            int idx = Random.Range(0, customerSprites.Count);
+            return customerSprites[idx];
         }
 
         RectTransform ResolveBubbleParent()
