@@ -39,7 +39,7 @@ namespace MachineRepair.EditorTools
                 }
 
                 line.template             = e.template;
-                line.tag                  = e.tag;
+                line.tags                 = new List<FlavorLine.TaggedAudience>(e.tags);
                 line.weight               = e.weight;
                 line.minCooldownSeconds   = e.cooldown;
                 line.requireMode          = e.mode;
@@ -89,7 +89,7 @@ namespace MachineRepair.EditorTools
         private class Entry
         {
             public string template;
-            public string tag;
+            public List<FlavorLine.TaggedAudience> tags;
             public int    weight;
             public float  cooldown;
             public FlavorModeReq mode;
@@ -102,12 +102,17 @@ namespace MachineRepair.EditorTools
 
         private static List<Entry> GetEntries()
         {
-            Entry E(string t, string tag = "annoy", int w = 1, float cd = 360f,
-                    FlavorModeReq m = FlavorModeReq.Any, int minParts = 0, int minBoil = 0,
-                    bool reqW = false, bool reqP = false, bool once = false)
+            Entry E(string t, FlavorModeReq m = FlavorModeReq.Any, int w = 1, float cd = 360f,
+                    int minParts = 0, int minBoil = 0, bool reqW = false, bool reqP = false, bool once = false)
             {
+                var tags = new List<FlavorLine.TaggedAudience>
+                {
+                    new FlavorLine.TaggedAudience { tag = FlavorContextTag.Chaotic, weight = 1 },
+                    new FlavorLine.TaggedAudience { tag = FlavorContextTag.General, weight = 1 },
+                };
+
                 return new Entry {
-                    template = t, tag = tag, weight = w, cooldown = cd, mode = m,
+                    template = t, tags = tags, weight = w, cooldown = cd, mode = m,
                     minTotalParts = minParts, minBoilers = minBoil, reqWater = reqW, reqPower = reqP, once = once
                 };
             }
