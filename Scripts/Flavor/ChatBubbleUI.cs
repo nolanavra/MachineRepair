@@ -10,6 +10,7 @@ namespace MachineRepair.Flavor
         [Header("Bindings")]
         [SerializeField] private TextMeshProUGUI bodyText;
         [SerializeField] private CanvasGroup canvasGroup;
+        [SerializeField] private UnityEngine.UI.Image portraitImage;
 
         [Header("Animation")]
         [SerializeField, Min(0f)] private float fadeOutDuration = 0.35f;
@@ -22,6 +23,22 @@ namespace MachineRepair.Flavor
             if (bodyText != null)
             {
                 bodyText.text = value ?? string.Empty;
+            }
+        }
+
+        public void SetPortrait(Sprite sprite)
+        {
+            if (portraitImage == null)
+            {
+                return;
+            }
+
+            bool hasSprite = sprite != null;
+            portraitImage.sprite = sprite;
+            portraitImage.enabled = hasSprite;
+            if (portraitImage.transform.parent != null)
+            {
+                portraitImage.transform.parent.gameObject.SetActive(hasSprite);
             }
         }
 
