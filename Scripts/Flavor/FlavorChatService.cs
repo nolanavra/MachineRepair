@@ -30,6 +30,7 @@ namespace MachineRepair.Flavor
         private readonly Dictionary<FlavorLine, double> _nextAllowed = new();
         private readonly HashSet<FlavorLine> _shownThisSession = new();
         private Coroutine _loop;
+        private RectTransform _resolvedParent;
 
         void Awake()
         {
@@ -93,9 +94,9 @@ namespace MachineRepair.Flavor
                 if (verbose) Debug.LogWarning("[FlavorChatService] No context source.");
                 return;
             }
-            if (bubblePrefab == null || bubbleParent == null)
+            if (bubblePrefab == null)
             {
-                if (verbose) Debug.LogWarning("[FlavorChatService] bubblePrefab or bubbleParent not assigned.");
+                if (verbose) Debug.LogWarning("[FlavorChatService] bubblePrefab is not assigned.");
                 return;
             }
 
@@ -200,51 +201,76 @@ namespace MachineRepair.Flavor
                 return;
             }
 
-            RectTransform parent = bubbleParent;
-
-            // If parent is missing or not a scene object, try to find or create one at runtime.
-            if (parent == null || !parent.gameObject.scene.IsValid())
+            var parent = ResolveBubbleParent();
+            if (parent == null)
             {
-                if (verbose)
-                    Debug.LogWarning("[FlavorChatService] bubbleParent is null or persistent (asset). Falling back to a runtime Canvas parent.");
-
-                // Find any scene Canvas
-#if UNITY_2023_1_OR_NEWER
-                var canvas = FindFirstObjectByType<Canvas>(FindObjectsInactive.Exclude);
-#else
-        var canvas = FindObjectOfType<Canvas>();
-#endif
-                if (canvas == null)
-                {
-                    // create a quick runtime canvas
-                    var go = new GameObject("RuntimeCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-                    var c = go.GetComponent<Canvas>();
-                    c.renderMode = RenderMode.ScreenSpaceOverlay;
-                    canvas = c;
-                    if (verbose) Debug.Log("[FlavorChatService] Created a RuntimeCanvas.");
-                }
-
-                // Create a BubbleRoot if needed
-                var br = canvas.transform.Find("BubbleRoot") as RectTransform;
-                if (br == null)
-                {
-                    var go = new GameObject("BubbleRoot", typeof(RectTransform));
-                    br = go.GetComponent<RectTransform>();
-                    br.SetParent(canvas.transform, false);
-                    br.anchorMin = new Vector2(1f, 1f); // top-right
-                    br.anchorMax = new Vector2(1f, 1f);
-                    br.pivot = new Vector2(1f, 1f);
-                    br.anchoredPosition = new Vector2(-1400f, 0f);
-                    br.sizeDelta = new Vector2(400f, 600f);
-                    if (verbose) Debug.Log("[FlavorChatService] Created BubbleRoot under Canvas.");
-                }
-
-                parent = br;
+                if (verbose) Debug.LogWarning("[FlavorChatService] Could not resolve a bubble parent.");
+                return;
             }
 
             var ui = Instantiate(bubblePrefab, parent); // parent is a scene RectTransform now
             ui.SetText(text);
             ui.Play(bubbleLifetime);
+        }
+
+        RectTransform ResolveBubbleParent()
+        {
+            if (_resolvedParent != null && _resolvedParent.gameObject != null && _resolvedParent.gameObject.scene.IsValid())
+            {
+                return _resolvedParent;
+            }
+
+            if (bubbleParent != null && bubbleParent.gameObject.scene.IsValid())
+            {
+                _resolvedParent = bubbleParent;
+                return _resolvedParent;
+            }
+
+            // Prefer a Canvas in our own hierarchy.
+            Canvas canvas = GetComponentInParent<Canvas>();
+#if UNITY_2023_1_OR_NEWER
+            if (canvas == null) canvas = FindFirstObjectByType<Canvas>(FindObjectsInactive.Include);
+#else
+            if (canvas == null) canvas = FindObjectOfType<Canvas>();
+#endif
+
+            if (canvas == null)
+            {
+                // create a quick runtime canvas
+                var go = new GameObject("RuntimeCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+                var c = go.GetComponent<Canvas>();
+                c.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas = c;
+                if (verbose) Debug.Log("[FlavorChatService] Created a RuntimeCanvas.");
+            }
+
+            if (canvas == null) return null;
+
+            var br = canvas.transform.Find("BubbleRoot") as RectTransform;
+            if (br == null)
+            {
+                var go = new GameObject("BubbleRoot", typeof(RectTransform), typeof(VerticalLayoutGroup));
+                br = go.GetComponent<RectTransform>();
+                br.SetParent(canvas.transform, false);
+                br.anchorMin = new Vector2(1f, 1f); // top-right
+                br.anchorMax = new Vector2(1f, 1f);
+                br.pivot = new Vector2(1f, 1f);
+                br.anchoredPosition = new Vector2(-1400f, 0f);
+                br.sizeDelta = new Vector2(400f, 600f);
+
+                var layout = go.GetComponent<VerticalLayoutGroup>();
+                layout.childControlHeight = true;
+                layout.childControlWidth = true;
+                layout.childForceExpandHeight = false;
+                layout.childForceExpandWidth = true;
+                layout.childAlignment = TextAnchor.UpperRight;
+                layout.spacing = 8f;
+
+                if (verbose) Debug.Log("[FlavorChatService] Created BubbleRoot under Canvas.");
+            }
+
+            _resolvedParent = br;
+            return _resolvedParent;
         }
     }
 }
