@@ -243,7 +243,7 @@ namespace MachineRepair.Flavor
             if (customerSprites == null || customerSprites.Count == 0)
                 return null;
 
-            if (cameraFocusController == null || !cameraFocusController.IsSubGridActive)
+            if (cameraFocusController == null)
                 return null;
 
             int idx = Random.Range(0, customerSprites.Count);
