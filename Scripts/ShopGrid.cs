@@ -59,6 +59,7 @@ namespace MachineRepair.Grid
         [SerializeField] private bool enableCellHighlights = false;
         [SerializeField] private Sprite cellHighlightSprite;
         [SerializeField] private Transform cellHighlightParent;
+        [SerializeField] private Transform subGridHighlightParent;
         [SerializeField] private string cellHighlightSortingLayer = "Default";
         [SerializeField] private int cellHighlightSortingOrder = 0;
         [SerializeField] private Color placeableColor = new Color(0.25f, 0.9f, 0.25f, 0.2f);
@@ -366,6 +367,14 @@ namespace MachineRepair.Grid
             cellHighlightParent = go.transform;
         }
 
+        private void EnsureSubGridHighlightParent()
+        {
+            if (subGridHighlightParent != null) return;
+            var go = new GameObject("SubGridCellHighlights");
+            go.transform.SetParent(transform, worldPositionStays: false);
+            subGridHighlightParent = go.transform;
+        }
+
         private void BuildCellHighlightPool()
         {
             if (!enableCellHighlights || cellHighlightSprite == null) return;
@@ -373,25 +382,29 @@ namespace MachineRepair.Grid
             EnsureHighlightParent();
             cellHighlights = new SpriteRenderer[CellCount];
             subGridHighlights = mirrorHighlightsToSubGrid ? new SpriteRenderer[CellCount] : null;
+            if (subGridHighlights != null)
+            {
+                EnsureSubGridHighlightParent();
+            }
 
             for (int i = 0; i < CellCount; i++)
             {
                 var (x, y) = FromIndex(i);
                 var mainName = $"cellHighlight_{x}_{y}";
-                cellHighlights[i] = CreateCellHighlightRenderer(mainName, new Vector2Int(x, y), Vector3.zero);
+                cellHighlights[i] = CreateCellHighlightRenderer(mainName, new Vector2Int(x, y), Vector3.zero, cellHighlightParent);
 
-                if (subGridHighlights != null)
+                if (subGridHighlights != null && y == 0)
                 {
                     var subName = $"subGridCellHighlight_{x}_{y}";
-                    subGridHighlights[i] = CreateCellHighlightRenderer(subName, new Vector2Int(x, y), subGridHighlightOffset);
+                    subGridHighlights[i] = CreateCellHighlightRenderer(subName, new Vector2Int(x, y), subGridHighlightOffset, subGridHighlightParent);
                 }
             }
         }
 
-        private SpriteRenderer CreateCellHighlightRenderer(string name, Vector2Int cell, Vector3 offset)
+        private SpriteRenderer CreateCellHighlightRenderer(string name, Vector2Int cell, Vector3 offset, Transform parent)
         {
             var go = new GameObject(name);
-            go.transform.SetParent(cellHighlightParent, worldPositionStays: false);
+            go.transform.SetParent(parent, worldPositionStays: false);
             go.transform.position = CellToWorld(cell) + offset;
 
             var renderer = go.AddComponent<SpriteRenderer>();
