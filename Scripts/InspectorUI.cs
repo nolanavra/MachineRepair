@@ -22,6 +22,8 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private Text descriptionText;
     [SerializeField] private Text connectionsText;
     [SerializeField] private Text parametersText;
+    [SerializeField] private GameObject panelRoot;
+    [SerializeField] private CanvasGroup panelCanvasGroup;
 
     private void Awake()
     {
@@ -65,6 +67,8 @@ public class InspectorUI : MonoBehaviour
             ClearDisplay();
             return;
         }
+
+        SetPanelVisible(true);
 
         switch (selection.target)
         {
@@ -127,6 +131,7 @@ public class InspectorUI : MonoBehaviour
         SetDescription(string.Empty);
         SetConnections(string.Empty);
         SetParameters(string.Empty);
+        SetPanelVisible(false);
     }
 
     private ThingDef ResolveComponentDef(MachineComponent component)
@@ -265,5 +270,33 @@ public class InspectorUI : MonoBehaviour
     private void SetParameters(string value)
     {
         if (parametersText != null) parametersText.text = value ?? string.Empty;
+    }
+
+    private void SetPanelVisible(bool visible)
+    {
+        if (panelRoot != null && panelRoot != gameObject)
+        {
+            if (panelRoot.activeSelf != visible)
+            {
+                panelRoot.SetActive(visible);
+            }
+            return;
+        }
+
+        if (panelCanvasGroup == null)
+        {
+            panelCanvasGroup = (panelRoot != null ? panelRoot.GetComponent<CanvasGroup>() : GetComponent<CanvasGroup>());
+            if (panelCanvasGroup == null && !visible)
+            {
+                panelCanvasGroup = (panelRoot ?? gameObject).AddComponent<CanvasGroup>();
+            }
+        }
+
+        if (panelCanvasGroup != null)
+        {
+            panelCanvasGroup.alpha = visible ? 1f : 0f;
+            panelCanvasGroup.interactable = visible;
+            panelCanvasGroup.blocksRaycasts = visible;
+        }
     }
 }
