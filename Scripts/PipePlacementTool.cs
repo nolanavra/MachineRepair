@@ -423,25 +423,33 @@ namespace MachineRepair
                 RecordDebugCandidate(current.Position, candidate, false, "No movement");
                 return;
             }
+
             if (!PathEvaluation.IsTurnAllowed(current.Direction, direction, MinTurnAngleDegrees))
             {
+                if (PathEvaluation.TryBuildWideTurn(current.Direction, direction, MinTurnAngleDegrees,
+                        out var firstDiagonal, out var secondDiagonal))
+                {
+                    bool handled = TryEnqueueWideTurn(
+                        start,
+                        goal,
+                        avoidExistingRuns,
+                        cameFrom,
+                        frontier,
+                        visited,
+                        current,
+                        firstDiagonal,
+                        secondDiagonal);
+
+                    if (handled) return;
+                }
+
                 RecordDebugCandidate(current.Position, candidate, false, "Turn too sharp");
                 return;
             }
 
-            bool isGoal = candidate == goal;
-            bool blockedByComponent = nextCell.HasComponent && !isGoal && candidate != start;
-            bool blockedByPlaceability = nextCell.placeability == CellPlaceability.Blocked;
-            if (blockedByComponent || blockedByPlaceability)
+            if (!IsCellPassable(start, goal, avoidExistingRuns, candidate, nextCell, out var reason))
             {
-                RecordDebugCandidate(current.Position, candidate, false, "Cell blocked");
-                return;
-            }
-
-            bool blockedByExistingRun = avoidExistingRuns && candidate != start && candidate != goal && (nextCell.HasPipe || nextCell.HasWire);
-            if (blockedByExistingRun)
-            {
-                RecordDebugCandidate(current.Position, candidate, false, "Existing run");
+                RecordDebugCandidate(current.Position, candidate, false, reason);
                 return;
             }
 
@@ -452,6 +460,87 @@ namespace MachineRepair
             frontier.Enqueue(nextState);
             cameFrom[nextState] = current;
             RecordDebugCandidate(current.Position, candidate, true, "Accepted");
+        }
+
+        private bool TryEnqueueWideTurn(
+            Vector2Int start,
+            Vector2Int goal,
+            bool avoidExistingRuns,
+            Dictionary<PathState, PathState> cameFrom,
+            Queue<PathState> frontier,
+            HashSet<PathState> visited,
+            PathState current,
+            Vector2Int firstDiagonal,
+            Vector2Int secondDiagonal)
+        {
+            var firstPosition = current.Position + firstDiagonal;
+            if (!grid.InBounds(firstPosition.x, firstPosition.y)) return false;
+            if (!grid.TryGetCell(firstPosition, out var firstCell)) return false;
+            if (!IsCellPassable(start, goal, avoidExistingRuns, firstPosition, firstCell, out var firstReason))
+            {
+                RecordDebugCandidate(current.Position, firstPosition, false, firstReason);
+                return false;
+            }
+
+            var firstState = new PathState(firstPosition, firstDiagonal);
+            if (!visited.Contains(firstState))
+            {
+                visited.Add(firstState);
+                frontier.Enqueue(firstState);
+                cameFrom[firstState] = current;
+                RecordDebugCandidate(current.Position, firstPosition, true, "Wide turn first");
+            }
+
+            var secondPosition = firstPosition + secondDiagonal;
+            if (!grid.InBounds(secondPosition.x, secondPosition.y)) return true; // first step is usable; second is out of bounds
+            if (!grid.TryGetCell(secondPosition, out var secondCell)) return true;
+            if (!PathEvaluation.IsTurnAllowed(firstDiagonal, secondDiagonal, MinTurnAngleDegrees)) return true;
+            if (!IsCellPassable(start, goal, avoidExistingRuns, secondPosition, secondCell, out var secondReason))
+            {
+                RecordDebugCandidate(firstPosition, secondPosition, false, secondReason);
+                return true;
+            }
+
+            var secondState = new PathState(secondPosition, secondDiagonal);
+            if (visited.Contains(secondState)) return true;
+
+            visited.Add(secondState);
+            frontier.Enqueue(secondState);
+            cameFrom[secondState] = firstState;
+            RecordDebugCandidate(firstPosition, secondPosition, true, "Wide turn second");
+            return true;
+        }
+
+        private bool IsCellPassable(
+            Vector2Int start,
+            Vector2Int goal,
+            bool avoidExistingRuns,
+            Vector2Int candidate,
+            cellDef candidateCell,
+            out string reason)
+        {
+            reason = string.Empty;
+
+            bool isGoal = candidate == goal;
+            bool blockedByComponent = candidateCell.HasComponent && !isGoal && candidate != start;
+            bool blockedByPlaceability = candidateCell.placeability == CellPlaceability.Blocked;
+            if (blockedByComponent || blockedByPlaceability)
+            {
+                reason = "Cell blocked";
+                return false;
+            }
+
+            bool blockedByExistingRun = avoidExistingRuns
+                                         && candidate != start
+                                         && candidate != goal
+                                         && (candidateCell.HasPipe || candidateCell.HasWire);
+            if (blockedByExistingRun)
+            {
+                reason = "Existing run";
+                return false;
+            }
+
+            return true;
         }
 
         private void OnDrawGizmosSelected()
