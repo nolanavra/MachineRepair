@@ -213,7 +213,26 @@ namespace MachineRepair.Flavor
                 return;
             }
 
+            if (!parent.gameObject.activeInHierarchy)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] Bubble parent was inactive; activating so chat bubble coroutines can run.");
+                parent.gameObject.SetActive(true);
+            }
+
             var ui = Instantiate(bubblePrefab, parent); // parent is a scene RectTransform now
+
+            if (!ui.gameObject.activeSelf)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] bubblePrefab was inactive; activating spawned bubble.");
+                ui.gameObject.SetActive(true);
+            }
+
+            if (!ui.gameObject.activeInHierarchy)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] Spawned bubble is still inactive in hierarchy; skipping Play().");
+                return;
+            }
+
             ui.SetText(text);
             ui.SetPortrait(portrait);
             ui.Play(bubbleLifetime);
