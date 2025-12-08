@@ -1,17 +1,18 @@
 
 #if UNITY_EDITOR
 using System.Collections.Generic;
+using MachineRepair.Flavor;
 using UnityEditor;
 using UnityEngine;
 
-namespace Espresso.EditorTools
+namespace MachineRepair.EditorTools
 {
     public static class AnnoyingCustomersFlavorPack
     {
         private const string RootFolder = "Assets/Flavor/AnnoyingCustomers";
         private const string BankPath = RootFolder + "/AnnoyingCustomers_FlavorBank.asset";
 
-        [MenuItem("Espresso/Generate Annoying Customer Flavor Pack")]
+        [MenuItem("Tools/MachineRepair/Generate Annoying Customer Flavor Pack")]
         public static void Generate()
         {
             EnsureFolder(RootFolder);
@@ -143,6 +144,11 @@ namespace Espresso.EditorTools
                 E("Can you set it to 'Grandma’s Kitchen' mode? {mode} is fine I guess.", cd:540f),
                 E("I brought a refractometer and a vibe check. Proceed.", cd:900f),
                 E("I’ll be back after I write 3,000 words about this experience.", cd:900f, once:true),
+                E("It’s been {seconds} seconds; do you offer time refunds?", cd:360f),
+                E("You run {powerBlocks} power block(s)? Bold. I prefer prime numbers only.", cd:540f, reqP:true),
+                E("{valves} valve(s) and not one dedicated to my feelings? Outrageous.", cd:480f, minParts:1),
+                E("In {mode} again? At this rate I’ll age {minutes} years.", cd:600f, w:2),
+                E("With {pumps} pumps and {boilers} boilers, this better taste like a thesis.", cd:720f, minBoil:1),
             };
 
             return L;
