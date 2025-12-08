@@ -34,6 +34,10 @@ public class CameraGridFocusController : MonoBehaviour
     [SerializeField] private GameObject inspectorPanel;
     [SerializeField] private GameObject wirePipeUIRoot;
 
+    [Header("Chat Bubbles")]
+    [SerializeField] private GameObject chatBubbleContainer;
+    [SerializeField] private bool keepChatBubblesVisibleInSubGrid = true;
+
     public bool IsSubGridActive { get; private set; }
 
     private readonly Dictionary<GameObject, bool> defaultPanelVisibility = new();
@@ -186,6 +190,7 @@ public class CameraGridFocusController : MonoBehaviour
         CacheDefaultState(inventoryPanel);
         CacheDefaultState(inspectorPanel);
         CacheDefaultState(wirePipeUIRoot);
+        CacheDefaultState(chatBubbleContainer);
     }
 
     private void CacheDefaultState(GameObject panel)
@@ -200,11 +205,14 @@ public class CameraGridFocusController : MonoBehaviour
 
     private void ApplyFrontViewVisibility()
     {
-        bool shouldShow = !IsSubGridActive;
+        bool shouldShowPanels = !IsSubGridActive;
 
-        ApplyVisibility(inventoryPanel, shouldShow);
-        ApplyVisibility(inspectorPanel, shouldShow);
-        ApplyVisibility(wirePipeUIRoot, shouldShow);
+        ApplyVisibility(inventoryPanel, shouldShowPanels);
+        ApplyVisibility(inspectorPanel, shouldShowPanels);
+        ApplyVisibility(wirePipeUIRoot, shouldShowPanels);
+
+        bool shouldShowChatBubbles = keepChatBubblesVisibleInSubGrid || shouldShowPanels;
+        ApplyVisibility(chatBubbleContainer, shouldShowChatBubbles);
     }
 
     private void ApplyVisibility(GameObject panel, bool shouldShow)

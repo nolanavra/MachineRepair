@@ -13,6 +13,7 @@ namespace MachineRepair.Flavor
 
         [Header("UI Spawn")]
         public ChatBubbleUI bubblePrefab;
+        [Tooltip("ChatBubbleContainer RectTransform under the front-view UI; falls back to the nearest Canvas if null.")]
         public RectTransform bubbleParent;
         [Min(1f)] public float bubbleLifetime = 6f;
 
@@ -287,6 +288,11 @@ namespace MachineRepair.Flavor
             }
 
             _resolvedParent = br;
+            if (verbose)
+            {
+                string parentName = br.parent != null ? br.parent.name : "<root>";
+                Debug.Log($"[FlavorChatService] Bubble parent: {br.name} under {parentName}.");
+            }
             return _resolvedParent;
         }
     }
