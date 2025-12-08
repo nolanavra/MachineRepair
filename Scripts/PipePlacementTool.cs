@@ -380,7 +380,14 @@ namespace MachineRepair
 
                 foreach (var dir in dirs)
                 {
+                    bool allowed = IsDirectionAllowed(current.Direction, dir);
                     var candidate = current.Position + dir;
+                    if (!allowed)
+                    {
+                        RecordDebugCandidate(current.Position, candidate, false, "Direction not allowed");
+                        continue;
+                    }
+
                     TryEnqueueNeighbor(start, goal, avoidExistingRuns, cameFrom, frontier, visited, current, candidate);
                 }
             }
@@ -396,6 +403,14 @@ namespace MachineRepair
             }
 
             return result;
+        }
+
+        private bool IsDirectionAllowed(Vector2Int currentDirection, Vector2Int candidateDirection)
+        {
+            if (currentDirection == Vector2Int.zero) return true;
+
+            float angle = Vector2.Angle(currentDirection, candidateDirection);
+            return angle <= 45f;
         }
 
         private void RecordDebugCandidate(Vector2Int from, Vector2Int to, bool accepted, string reason)
