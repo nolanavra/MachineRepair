@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using UnityEngine.UI;
+using System.Collections.Generic;
 
 public class CameraGridFocusController : MonoBehaviour
 {
@@ -28,7 +29,14 @@ public class CameraGridFocusController : MonoBehaviour
     [Header("Defaults")]
     [SerializeField] private bool startWithSubGridActive;
 
+    [Header("UI Panels")]
+    [SerializeField] private GameObject inventoryPanel;
+    [SerializeField] private GameObject inspectorPanel;
+    [SerializeField] private GameObject wirePipeUIRoot;
+
     public bool IsSubGridActive { get; private set; }
+
+    private readonly Dictionary<GameObject, bool> defaultPanelVisibility = new();
 
     private void Awake()
     {
@@ -42,6 +50,8 @@ public class CameraGridFocusController : MonoBehaviour
 
     private void OnEnable()
     {
+        CacheDefaultPanelStates();
+
         if (toggleFocusButton != null)
         {
             toggleFocusButton.onClick.AddListener(ToggleFocus);
@@ -80,6 +90,7 @@ public class CameraGridFocusController : MonoBehaviour
 
         IsSubGridActive = false;
         UpdateFocusIndicator();
+        ApplyFrontViewVisibility();
     }
 
     public void FocusSubGrid()
@@ -91,6 +102,7 @@ public class CameraGridFocusController : MonoBehaviour
 
         IsSubGridActive = true;
         UpdateFocusIndicator();
+        ApplyFrontViewVisibility();
     }
 
     public void ToggleFocus()
@@ -167,5 +179,48 @@ public class CameraGridFocusController : MonoBehaviour
         }
 
         focusLabel.text = IsSubGridActive ? subGridLabel : mainGridLabel;
+    }
+
+    private void CacheDefaultPanelStates()
+    {
+        CacheDefaultState(inventoryPanel);
+        CacheDefaultState(inspectorPanel);
+        CacheDefaultState(wirePipeUIRoot);
+    }
+
+    private void CacheDefaultState(GameObject panel)
+    {
+        if (panel == null || defaultPanelVisibility.ContainsKey(panel))
+        {
+            return;
+        }
+
+        defaultPanelVisibility[panel] = panel.activeSelf;
+    }
+
+    private void ApplyFrontViewVisibility()
+    {
+        bool shouldShow = !IsSubGridActive;
+
+        ApplyVisibility(inventoryPanel, shouldShow);
+        ApplyVisibility(inspectorPanel, shouldShow);
+        ApplyVisibility(wirePipeUIRoot, shouldShow);
+    }
+
+    private void ApplyVisibility(GameObject panel, bool shouldShow)
+    {
+        if (panel == null)
+        {
+            return;
+        }
+
+        bool desiredState = shouldShow
+            ? defaultPanelVisibility.GetValueOrDefault(panel, true)
+            : false;
+
+        if (panel.activeSelf != desiredState)
+        {
+            panel.SetActive(desiredState);
+        }
     }
 }
