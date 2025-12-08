@@ -64,7 +64,8 @@ namespace MachineRepair
 
         private Camera cam;
         private LineRenderer activePreview;
-        private readonly List<LineRenderer> placedPipes = new();
+        private readonly List<LineRenderer> placedPipeRenderers = new();
+        private readonly List<PlacedPipe> placedPipes = new();
         private Vector2Int? startCell;
         private InputAction pointAction;
         private Vector2 pointerScreenPosition;
@@ -215,8 +216,14 @@ namespace MachineRepair
                 return;
             }
 
-            ApplyPipeToGrid(path, placedPipe);
+            if (!ApplyPipeToGrid(path, placedPipe))
+            {
+                Destroy(placedPipe.gameObject);
+                CancelPreview();
+                return;
+            }
             RenderFinalPipe(path);
+            placedPipes.Add(placedPipe);
             RegisterConnections(placedPipe);
 
             startCell = null;
@@ -408,10 +415,37 @@ namespace MachineRepair
             cameFrom[nextState] = current;
         }
 
-        private void ApplyPipeToGrid(List<Vector2Int> path, PlacedPipe placedPipe)
+        private bool ApplyPipeToGrid(List<Vector2Int> path, PlacedPipe placedPipe)
         {
-            if (path == null || placedPipe == null) return;
-            grid.AddPipeRun(path, placedPipe);
+            if (path == null || placedPipe == null) return false;
+            return grid.AddPipeRun(path, placedPipe);
+        }
+
+        public bool UndoLastPipe()
+        {
+            if (placedPipes.Count == 0) return false;
+
+            int lastIndex = placedPipes.Count - 1;
+            var pipe = placedPipes[lastIndex];
+            placedPipes.RemoveAt(lastIndex);
+
+            if (pipe != null)
+            {
+                grid.ClearPipeRun(pipe.occupiedCells, pipe);
+                Destroy(pipe.gameObject);
+            }
+
+            if (lastIndex < placedPipeRenderers.Count)
+            {
+                var renderer = placedPipeRenderers[lastIndex];
+                placedPipeRenderers.RemoveAt(lastIndex);
+                if (renderer != null)
+                {
+                    Destroy(renderer.gameObject);
+                }
+            }
+
+            return true;
         }
 
         private void RenderFinalPipe(List<Vector2Int> path)
@@ -442,7 +476,7 @@ namespace MachineRepair
                 renderer.SetPosition(i, world);
             }
 
-            placedPipes.Add(renderer);
+            placedPipeRenderers.Add(renderer);
         }
 
         private void ApplyPipeColor(LineRenderer renderer)

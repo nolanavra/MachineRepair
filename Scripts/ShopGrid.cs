@@ -665,6 +665,41 @@ namespace MachineRepair.Grid
             return placedAny;
         }
 
+        public bool ClearPipeRun(IEnumerable<Vector2Int> cells, PlacedPipe pipe)
+        {
+            if (cells == null || pipe == null) return false;
+
+            foreach (var c in cells)
+            {
+                if (!InBounds(c.x, c.y))
+                {
+                    Debug.LogWarning($"ClearPipeRun failed: cell {c} out of bounds.");
+                    return false;
+                }
+            }
+
+            bool clearedAny = false;
+            foreach (var c in cells)
+            {
+                int idx = ToIndex(c);
+                var occupancy = occupancyByIndex[idx];
+
+                if (occupancy.pipes != null && occupancy.pipes.Contains(pipe))
+                {
+                    occupancy.pipes.Remove(pipe);
+                    if (occupancy.pipes.Count == 0)
+                    {
+                        occupancy.pipes = null;
+                    }
+
+                    occupancyByIndex[idx] = occupancy;
+                    clearedAny = true;
+                }
+            }
+
+            return clearedAny;
+        }
+
         public bool ClearCell(Vector2Int c)
         {
             if (!InBounds(c.x, c.y)) return false;
