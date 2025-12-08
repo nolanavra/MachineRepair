@@ -69,8 +69,11 @@ namespace MachineRepair.Grid
         [SerializeField] private Color wireContentColor = new Color(0.25f, 0.9f, 0.9f, 0.35f);
         [SerializeField] private Color pipeContentColor = new Color(0.75f, 0.55f, 1f, 0.35f);
         [SerializeField] private Color mixedContentColor = new Color(0.95f, 0.35f, 0.35f, 0.35f);
+        [SerializeField] private bool mirrorHighlightsToSubGrid = true;
+        [SerializeField] private Vector3 subGridHighlightOffset = new Vector3(0f, -50f, 0f);
 
         private SpriteRenderer[] cellHighlights;
+        private SpriteRenderer[] subGridHighlights;
 
         private void Start()
         {
@@ -369,21 +372,34 @@ namespace MachineRepair.Grid
 
             EnsureHighlightParent();
             cellHighlights = new SpriteRenderer[CellCount];
+            subGridHighlights = mirrorHighlightsToSubGrid ? new SpriteRenderer[CellCount] : null;
 
             for (int i = 0; i < CellCount; i++)
             {
                 var (x, y) = FromIndex(i);
-                var go = new GameObject($"cellHighlight_{x}_{y}");
-                go.transform.SetParent(cellHighlightParent, worldPositionStays: false);
-                go.transform.position = CellToWorld(new Vector2Int(x, y));
+                var mainName = $"cellHighlight_{x}_{y}";
+                cellHighlights[i] = CreateCellHighlightRenderer(mainName, new Vector2Int(x, y), Vector3.zero);
 
-                var renderer = go.AddComponent<SpriteRenderer>();
-                renderer.sprite = cellHighlightSprite;
-                renderer.sortingLayerName = cellHighlightSortingLayer;
-                renderer.sortingOrder = cellHighlightSortingOrder;
-                renderer.enabled = false;
-                cellHighlights[i] = renderer;
+                if (subGridHighlights != null)
+                {
+                    var subName = $"subGridCellHighlight_{x}_{y}";
+                    subGridHighlights[i] = CreateCellHighlightRenderer(subName, new Vector2Int(x, y), subGridHighlightOffset);
+                }
             }
+        }
+
+        private SpriteRenderer CreateCellHighlightRenderer(string name, Vector2Int cell, Vector3 offset)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(cellHighlightParent, worldPositionStays: false);
+            go.transform.position = CellToWorld(cell) + offset;
+
+            var renderer = go.AddComponent<SpriteRenderer>();
+            renderer.sprite = cellHighlightSprite;
+            renderer.sortingLayerName = cellHighlightSortingLayer;
+            renderer.sortingOrder = cellHighlightSortingOrder;
+            renderer.enabled = false;
+            return renderer;
         }
 
         private void RefreshCellHighlights()
@@ -402,6 +418,9 @@ namespace MachineRepair.Grid
             if (cellHighlights == null || index < 0 || index >= cellHighlights.Length) return;
 
             var renderer = cellHighlights[index];
+            var subGridRenderer = subGridHighlights != null && index < subGridHighlights.Length
+                ? subGridHighlights[index]
+                : null;
             if (renderer == null) return;
 
             var cell = BuildCellDef(index);
@@ -414,6 +433,7 @@ namespace MachineRepair.Grid
             if (cell.placeability == CellPlaceability.Blocked && !hasContent)
             {
                 renderer.enabled = false;
+                if (subGridRenderer != null) subGridRenderer.enabled = false;
                 return;
             }
 
@@ -440,6 +460,11 @@ namespace MachineRepair.Grid
 
             renderer.color = color;
             renderer.enabled = true;
+            if (subGridRenderer != null)
+            {
+                subGridRenderer.color = color;
+                subGridRenderer.enabled = true;
+            }
         }
 
         private void UpdateCellPlaceability(int index, CellPlaceability placeability)
