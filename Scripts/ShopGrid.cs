@@ -613,6 +613,58 @@ namespace MachineRepair.Grid
             return placedAny;
         }
 
+        public bool AddPipeRun(IEnumerable<Vector2Int> cells, PlacedPipe pipe)
+        {
+            if (cells == null || pipe == null) return false;
+
+            bool IsPortCell(Vector2Int cell, MachineComponent component)
+            {
+                if (component == null) return false;
+
+                bool isStart = component == pipe.startComponent && cell == pipe.startPortCell;
+                bool isEnd = component == pipe.endComponent && cell == pipe.endPortCell;
+
+                return isStart || isEnd;
+            }
+
+            foreach (var c in cells)
+            {
+                if (!InBounds(c.x, c.y))
+                {
+                    Debug.LogWarning($"AddPipeRun failed: cell {c} out of bounds.");
+                    return false;
+                }
+
+                int idx = ToIndex(c);
+                var terrain = terrainByIndex[idx];
+                var occupancy = occupancyByIndex[idx];
+
+                if (terrain.placeability == CellPlaceability.Blocked)
+                {
+                    Debug.LogWarning($"AddPipeRun failed: cell {c} is blocked.");
+                    return false;
+                }
+
+                if (occupancy.HasComponent && !IsPortCell(c, occupancy.component))
+                {
+                    Debug.LogWarning($"AddPipeRun failed: cell {c} contains unrelated component '{occupancy.component.name}'.");
+                    return false;
+                }
+            }
+
+            bool placedAny = false;
+            foreach (var c in cells)
+            {
+                int idx = ToIndex(c);
+                var occupancy = occupancyByIndex[idx];
+                occupancy.AddPipe(pipe);
+                occupancyByIndex[idx] = occupancy;
+                placedAny = true;
+            }
+
+            return placedAny;
+        }
+
         public bool ClearCell(Vector2Int c)
         {
             if (!InBounds(c.x, c.y)) return false;
