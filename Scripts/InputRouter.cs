@@ -40,6 +40,7 @@ namespace MachineRepair.Grid
         [SerializeField] private Inventory inventory;
         [SerializeField] private GameObject currentComponentPrefab;
         [SerializeField] private WirePlacementTool wireTool;
+        [SerializeField] private PipePlacementTool pipeTool;
         private Camera cam;
 
         [Header("Placement State")]
@@ -119,9 +120,14 @@ namespace MachineRepair.Grid
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
             if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
             if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
+            if (pipeTool == null) pipeTool = FindFirstObjectByType<PipePlacementTool>();
             if (wireTool == null)
             {
                 Debug.LogWarning("WirePlacementTool not found; wire placement input will be ignored.");
+            }
+            if (pipeTool == null)
+            {
+                Debug.LogWarning("PipePlacementTool not found; pipe placement input will be ignored.");
             }
             SetupHighlightVisual();
             CacheInputActions();
@@ -357,10 +363,7 @@ namespace MachineRepair.Grid
         private void OnLeftClick_PipePlacement(cellDef cell, Vector2Int cellPos)
         {
             if (!CellUsable(cell)) return;
-
-            // TODO: Replace with your pipe placement logic.
-            // if (!PipeTool.HasActiveRun) PipeTool.StartAt(cellPos); else PipeTool.AddPoint(cellPos);
-            Debug.Log($"[PipePlacement] Point at {cellPos}");
+            pipeTool?.HandleClick(cellPos);
         }
 
         /// <summary>
@@ -369,9 +372,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnRightClick_PipePlacement(cellDef cell, Vector2Int cellPos)
         {
-            // TODO: Replace with your pipe cancel/undo logic.
-            // PipeTool.UndoLastPoint();
-            Debug.Log($"[PipePlacement] Undo/Cancel at {cellPos}");
+            pipeTool?.CancelPreview();
         }
 
         #endregion
