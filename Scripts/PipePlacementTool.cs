@@ -355,11 +355,7 @@ namespace MachineRepair
             cameFrom[startState] = startState;
             visited.Add(startState);
 
-            Vector2Int[] dirs =
-            {
-                Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right,
-                new Vector2Int(1, 1), new Vector2Int(1, -1), new Vector2Int(-1, 1), new Vector2Int(-1, -1)
-            };
+            Vector2Int[] dirs = NeighborOffsets;
 
             PathState goalState = default;
             bool found = false;
@@ -401,9 +397,28 @@ namespace MachineRepair
             return result;
         }
 
+        private static readonly Vector2Int[] NeighborOffsets =
+        {
+            Vector2Int.up, Vector2Int.down, Vector2Int.left, Vector2Int.right,
+            new Vector2Int(1, 1), new Vector2Int(1, -1), new Vector2Int(-1, 1), new Vector2Int(-1, -1)
+        };
+
         private bool IsDirectionAllowed(Vector2Int currentDirection, Vector2Int candidateDirection)
         {
-            return candidateDirection != Vector2Int.zero;
+            if (candidateDirection == Vector2Int.zero) return false;
+            if (currentDirection == Vector2Int.zero) return true;
+            if (candidateDirection == currentDirection) return true;
+
+            var relativeToStraight = candidateDirection - currentDirection;
+            for (int i = 0; i < NeighborOffsets.Length; i++)
+            {
+                if (relativeToStraight == NeighborOffsets[i])
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void RecordDebugCandidate(Vector2Int from, Vector2Int to, bool accepted, string reason)
