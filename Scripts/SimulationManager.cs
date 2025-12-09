@@ -37,6 +37,7 @@ namespace MachineRepair
         private readonly List<LeakInfo> detectedLeaks = new();
 
         private readonly List<string> faultLog = new();
+        private readonly HashSet<MachineComponent> componentsMissingReturn = new();
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
@@ -155,11 +156,69 @@ namespace MachineRepair
             EnsureGraph(ref signalGraph, cellCount);
 
             faultLog.Clear();
+            componentsMissingReturn.Clear();
         }
 
         private void PropagateVoltageCurrent()
         {
             if (grid == null || voltageGraph == null || currentGraph == null) return;
+
+            if (!powerOn)
+            {
+                return;
+            }
+
+            var portByCell = new Dictionary<Vector2Int, PowerPort>();
+            var chassisOutputs = new List<PowerPort>();
+            var chassisInputs = new HashSet<Vector2Int>();
+
+            CollectPowerPorts(portByCell, chassisOutputs, chassisInputs);
+
+            var wires = CollectPowerWires();
+            var adjacency = BuildPowerAdjacency(wires);
+
+            var poweredNodes = new Dictionary<Vector2Int, (float voltage, float current)>();
+            var poweredWires = new List<(PlacedWire wire, float voltage, float current)>();
+
+            foreach (var output in chassisOutputs)
+            {
+                if (!grid.InBounds(output.Cell.x, output.Cell.y)) continue;
+
+                var visited = new HashSet<Vector2Int>();
+                TraversePowerGraph(output.Cell, adjacency, visited);
+
+                bool hasReturn = visited.Overlaps(chassisInputs);
+
+                if (!hasReturn)
+                {
+                    MarkMissingReturnComponents(visited, portByCell);
+                    continue;
+                }
+
+                foreach (var node in visited)
+                {
+                    poweredNodes[node] = MergePower(poweredNodes, node, output.Voltage, output.Current);
+                }
+
+                foreach (var wire in wires)
+                {
+                    if (!visited.Contains(wire.startPortCell) || !visited.Contains(wire.endPortCell)) continue;
+
+                    poweredWires.Add((wire, output.Voltage, output.Current));
+                }
+            }
+
+            ApplyPowerToGraph(poweredNodes, poweredWires, portByCell);
+        }
+
+        private void CollectPowerPorts(
+            Dictionary<Vector2Int, PowerPort> portByCell,
+            List<PowerPort> chassisOutputs,
+            HashSet<Vector2Int> chassisInputs)
+        {
+            portByCell.Clear();
+            chassisOutputs.Clear();
+            chassisInputs.Clear();
 
             for (int y = 0; y < grid.height; y++)
             {
@@ -168,20 +227,214 @@ namespace MachineRepair
                     var cell = grid.GetCell(new Vector2Int(x, y));
                     if (cell.component == null || cell.component.def == null) continue;
 
-                    if (cell.component.def.type != ComponentType.ChassisPowerConnection) continue;
+                    if (cell.component.portDef == null || cell.component.portDef.ports == null) continue;
 
-                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
-                    int idx = grid.ToIndex(cell.component.anchorCell);
+                    for (int i = 0; i < cell.component.portDef.ports.Length; i++)
+                    {
+                        var port = cell.component.portDef.ports[i];
+                        if (port.port != PortType.Power) continue;
 
-                    float supplyVoltage = Mathf.Max(cell.component.def.maxACVoltage, cell.component.def.maxDCVoltage);
-                    float supplyCurrent = supplyVoltage > 0f && cell.component.def.wattage > 0f
-                        ? cell.component.def.wattage / supplyVoltage
-                        : 0f;
+                        Vector2Int global = cell.component.GetGlobalCell(port);
+                        if (!grid.InBounds(global.x, global.y)) continue;
 
-                    voltageGraph[idx] = supplyVoltage;
-                    currentGraph[idx] = supplyCurrent;
+                        float voltage = Mathf.Max(cell.component.def.maxACVoltage, cell.component.def.maxDCVoltage);
+                        float current = voltage > 0f && cell.component.def.wattage > 0f
+                            ? cell.component.def.wattage / voltage
+                            : 0f;
+
+                        var powerPort = new PowerPort
+                        {
+                            Cell = global,
+                            Component = cell.component,
+                            IsInput = port.isInput,
+                            Voltage = voltage,
+                            Current = current
+                        };
+
+                        portByCell[global] = powerPort;
+
+                        if (cell.component.def.type == ComponentType.ChassisPowerConnection)
+                        {
+                            if (port.isInput)
+                            {
+                                chassisInputs.Add(global);
+                            }
+                            else
+                            {
+                                chassisOutputs.Add(powerPort);
+                            }
+                        }
+                    }
                 }
             }
+        }
+
+        private List<PlacedWire> CollectPowerWires()
+        {
+            var wires = new List<PlacedWire>();
+            var seen = new HashSet<PlacedWire>();
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (!cell.HasWire) continue;
+
+                    foreach (var wire in cell.Wires)
+                    {
+                        if (wire == null || wire.wireType == WireType.Signal) continue;
+                        if (seen.Add(wire))
+                        {
+                            wires.Add(wire);
+                        }
+                    }
+                }
+            }
+
+            return wires;
+        }
+
+        private Dictionary<Vector2Int, List<Vector2Int>> BuildPowerAdjacency(IEnumerable<PlacedWire> wires)
+        {
+            var adjacency = new Dictionary<Vector2Int, List<Vector2Int>>();
+
+            foreach (var wire in wires)
+            {
+                if (wire == null) continue;
+
+                AddNeighbor(wire.startPortCell, wire.endPortCell);
+                AddNeighbor(wire.endPortCell, wire.startPortCell);
+            }
+
+            return adjacency;
+
+            void AddNeighbor(Vector2Int a, Vector2Int b)
+            {
+                if (!grid.InBounds(a.x, a.y) || !grid.InBounds(b.x, b.y)) return;
+
+                if (!adjacency.TryGetValue(a, out var list))
+                {
+                    list = new List<Vector2Int>();
+                    adjacency[a] = list;
+                }
+
+                if (!list.Contains(b))
+                {
+                    list.Add(b);
+                }
+            }
+        }
+
+        private void TraversePowerGraph(Vector2Int start, Dictionary<Vector2Int, List<Vector2Int>> adjacency, HashSet<Vector2Int> visited)
+        {
+            visited.Clear();
+            var queue = new Queue<Vector2Int>();
+
+            if (!grid.InBounds(start.x, start.y)) return;
+
+            visited.Add(start);
+            queue.Enqueue(start);
+
+            while (queue.Count > 0)
+            {
+                var node = queue.Dequeue();
+                if (!adjacency.TryGetValue(node, out var neighbors)) continue;
+
+                for (int i = 0; i < neighbors.Count; i++)
+                {
+                    var next = neighbors[i];
+                    if (visited.Add(next))
+                    {
+                        queue.Enqueue(next);
+                    }
+                }
+            }
+        }
+
+        private static (float voltage, float current) MergePower(Dictionary<Vector2Int, (float voltage, float current)> poweredNodes, Vector2Int node, float voltage, float current)
+        {
+            if (poweredNodes.TryGetValue(node, out var existing))
+            {
+                return (Mathf.Max(existing.voltage, voltage), Mathf.Max(existing.current, current));
+            }
+
+            return (voltage, current);
+        }
+
+        private void MarkMissingReturnComponents(IEnumerable<Vector2Int> visited, Dictionary<Vector2Int, PowerPort> portByCell)
+        {
+            foreach (var node in visited)
+            {
+                if (!portByCell.TryGetValue(node, out var port)) continue;
+
+                if (port.Component != null && port.Component.def != null && port.Component.def.requiresPower)
+                {
+                    componentsMissingReturn.Add(port.Component);
+                }
+            }
+        }
+
+        private void ApplyPowerToGraph(
+            Dictionary<Vector2Int, (float voltage, float current)> poweredNodes,
+            IEnumerable<(PlacedWire wire, float voltage, float current)> poweredWires,
+            Dictionary<Vector2Int, PowerPort> portByCell)
+        {
+            foreach (var kvp in poweredNodes)
+            {
+                int idx = grid.ToIndex(kvp.Key);
+                voltageGraph[idx] = Mathf.Max(voltageGraph[idx], kvp.Value.voltage);
+                currentGraph[idx] = Mathf.Max(currentGraph[idx], kvp.Value.current);
+
+                if (portByCell.TryGetValue(kvp.Key, out var port) && port.Component != null)
+                {
+                    var anchor = port.Component.anchorCell;
+                    if (grid.InBounds(anchor.x, anchor.y))
+                    {
+                        int anchorIdx = grid.ToIndex(anchor);
+                        voltageGraph[anchorIdx] = Mathf.Max(voltageGraph[anchorIdx], kvp.Value.voltage);
+                        currentGraph[anchorIdx] = Mathf.Max(currentGraph[anchorIdx], kvp.Value.current);
+                    }
+                }
+            }
+
+            foreach (var entry in poweredWires)
+            {
+                var wire = entry.wire;
+                if (wire == null) continue;
+
+                foreach (var cell in wire.occupiedCells)
+                {
+                    if (!grid.InBounds(cell.x, cell.y)) continue;
+
+                    int idx = grid.ToIndex(cell);
+                    voltageGraph[idx] = Mathf.Max(voltageGraph[idx], entry.voltage);
+                    currentGraph[idx] = Mathf.Max(currentGraph[idx], entry.current);
+                }
+
+                if (wire.startComponent != null && grid.InBounds(wire.startComponent.anchorCell.x, wire.startComponent.anchorCell.y))
+                {
+                    int startIdx = grid.ToIndex(wire.startComponent.anchorCell);
+                    voltageGraph[startIdx] = Mathf.Max(voltageGraph[startIdx], entry.voltage);
+                    currentGraph[startIdx] = Mathf.Max(currentGraph[startIdx], entry.current);
+                }
+
+                if (wire.endComponent != null && grid.InBounds(wire.endComponent.anchorCell.x, wire.endComponent.anchorCell.y))
+                {
+                    int endIdx = grid.ToIndex(wire.endComponent.anchorCell);
+                    voltageGraph[endIdx] = Mathf.Max(voltageGraph[endIdx], entry.voltage);
+                    currentGraph[endIdx] = Mathf.Max(currentGraph[endIdx], entry.current);
+                }
+            }
+        }
+
+        private struct PowerPort
+        {
+            public Vector2Int Cell;
+            public MachineComponent Component;
+            public bool IsInput;
+            public float Voltage;
+            public float Current;
         }
 
         private void PropagatePressureFlow()
@@ -336,7 +589,11 @@ namespace MachineRepair
                         int idx = grid.ToIndex(cell.component.anchorCell);
                         if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
 
-                        if (cell.component.def.requiresPower && voltageGraph[idx] <= 0f)
+                        if (cell.component.def.requiresPower && componentsMissingReturn.Contains(cell.component))
+                        {
+                            faultLog.Add($"{cell.component.def.displayName} missing return path at {cell.component.anchorCell}");
+                        }
+                        else if (cell.component.def.requiresPower && voltageGraph[idx] <= 0f)
                         {
                             faultLog.Add($"{cell.component.def.displayName} lacks power at {cell.component.anchorCell}");
                         }
