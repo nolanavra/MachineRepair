@@ -38,6 +38,7 @@ namespace MachineRepair
 
         private readonly List<string> faultLog = new();
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
+        private readonly HashSet<PlacedWire> completedCircuitWires = new();
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
@@ -132,6 +133,7 @@ namespace MachineRepair
 
             powerOn = enabled;
             stepTimer = 0f;
+            ApplyWireBloom(completedCircuitWires, powerOn);
             PowerToggled?.Invoke(powerOn);
         }
 
@@ -209,6 +211,7 @@ namespace MachineRepair
             }
 
             ApplyPowerToGraph(poweredNodes, poweredWires, portByCell);
+            UpdatePoweredCircuitWires(poweredWires);
         }
 
         private void CollectPowerPorts(
@@ -425,6 +428,36 @@ namespace MachineRepair
                     voltageGraph[endIdx] = Mathf.Max(voltageGraph[endIdx], entry.voltage);
                     currentGraph[endIdx] = Mathf.Max(currentGraph[endIdx], entry.current);
                 }
+            }
+        }
+
+        private void UpdatePoweredCircuitWires(IEnumerable<(PlacedWire wire, float voltage, float current)> poweredWires)
+        {
+            completedCircuitWires.Clear();
+
+            foreach (var entry in poweredWires)
+            {
+                if (entry.wire == null) continue;
+                completedCircuitWires.Add(entry.wire);
+            }
+
+            ApplyWireBloom(completedCircuitWires, powerOn);
+        }
+
+        private void ApplyWireBloom(IEnumerable<PlacedWire> closedCircuitWires, bool powerEnabled)
+        {
+            if (grid == null) return;
+
+            var closedSet = closedCircuitWires is HashSet<PlacedWire> hash
+                ? hash
+                : new HashSet<PlacedWire>(closedCircuitWires ?? Array.Empty<PlacedWire>());
+
+            var allWires = CollectPowerWires();
+            foreach (var wire in allWires)
+            {
+                if (wire == null) continue;
+                bool energized = powerEnabled && closedSet.Contains(wire);
+                wire.SetCircuitPowered(energized);
             }
         }
 

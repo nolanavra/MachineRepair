@@ -213,7 +213,7 @@ namespace MachineRepair
             }
 
             ApplyWireToGrid(path, placedWire);
-            RenderFinalWire(path);
+            RenderFinalWire(path, placedWire);
             RegisterConnection(path, targetCell, placedWire);
 
             startCell = null;
@@ -398,9 +398,9 @@ namespace MachineRepair
             grid.AddWireRun(path, placedWire);
         }
 
-        private void RenderFinalWire(List<Vector2Int> path)
+        private void RenderFinalWire(List<Vector2Int> path, PlacedWire placedWire)
         {
-            if (path.Count == 0) return;
+            if (path.Count == 0 || placedWire == null) return;
 
             var renderer = activePreview;
             if (renderer == null)
@@ -414,6 +414,9 @@ namespace MachineRepair
 
             var renderedPoints = GenerateCurvedPath(path, cornerRadius, samplesPerCorner);
             SetRendererPositions(renderer, renderedPoints);
+
+            renderer.transform.SetParent(placedWire.transform, worldPositionStays: false);
+            placedWire.AttachRenderer(renderer, wireColor);
 
             placedWires.Add(renderer);
         }
