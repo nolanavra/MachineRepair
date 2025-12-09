@@ -64,6 +64,10 @@ namespace MachineRepair
         [SerializeField] private Color pipeColor = new Color(0.75f, 0.55f, 1f, 1f);
         [SerializeField] private float previewZOffset = -0.1f;
         [SerializeField] private float lineWidth = 0.07f;
+        [SerializeField, Min(0f)] private float cornerRadius = 0.25f;
+        [SerializeField, Min(0)] private int samplesPerCorner = 2;
+        [SerializeField, Min(0)] private int lineCornerVertices = 1;
+        [SerializeField, Min(0)] private int lineCapVertices = 1;
 
         [Header("Behavior")]
         [SerializeField] private PlayerInput playerInput;
@@ -175,10 +179,7 @@ namespace MachineRepair
         {
             if (width <= 0f) return;
             lineWidth = width;
-            if (activePreview != null)
-            {
-                activePreview.widthMultiplier = lineWidth;
-            }
+            ConfigureLineRenderer(activePreview);
         }
 
         private bool IsPipePortCell(Vector2Int cellPos, cellDef cell)
@@ -264,7 +265,36 @@ namespace MachineRepair
             Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(pointerScreenPosition.x, pointerScreenPosition.y, Mathf.Abs(previewZOffset)));
             worldPos.z = previewZOffset;
 
-            activePreview.SetPosition(1, worldPos);
+            List<Vector2Int> path = null;
+            var start = startCell.Value;
+            if (grid != null)
+            {
+                var targetCell = grid.WorldToCell(worldPos);
+                if (grid.InBounds(targetCell.x, targetCell.y) && grid.TryGetCell(targetCell, out _))
+                {
+                    path = FindPath(start, targetCell);
+                    if (path.Count == 0)
+                    {
+                        path = null;
+                    }
+                }
+            }
+
+            if (path != null)
+            {
+                var curved = GenerateCurvedPath(path, cornerRadius, samplesPerCorner);
+                ConfigureLineRenderer(activePreview);
+                SetRendererPositions(activePreview, curved);
+            }
+            else
+            {
+                var startWorld = grid.CellToWorld(start);
+                startWorld.z = previewZOffset;
+                ConfigureLineRenderer(activePreview);
+                activePreview.positionCount = 2;
+                activePreview.SetPosition(0, startWorld);
+                activePreview.SetPosition(1, worldPos);
+            }
         }
 
         private void CacheInputActions()
@@ -321,7 +351,7 @@ namespace MachineRepair
             }
 
             ApplyPipeColor(activePreview);
-            activePreview.widthMultiplier = lineWidth;
+            ConfigureLineRenderer(activePreview);
         }
 
         private List<Vector2Int> FindPath(Vector2Int start, Vector2Int goal)
@@ -561,16 +591,101 @@ namespace MachineRepair
             }
 
             ApplyPipeColor(renderer);
-            renderer.widthMultiplier = lineWidth;
-            renderer.positionCount = path.Count;
-            for (int i = 0; i < path.Count; i++)
-            {
-                var world = grid.CellToWorld(path[i]);
-                world.z = previewZOffset;
-                renderer.SetPosition(i, world);
-            }
+            ConfigureLineRenderer(renderer);
+            var curved = GenerateCurvedPath(path, cornerRadius, samplesPerCorner);
+            SetRendererPositions(renderer, curved);
 
             placedPipeRenderers.Add(renderer);
+        }
+
+        private void ConfigureLineRenderer(LineRenderer renderer)
+        {
+            if (renderer == null) return;
+
+            renderer.widthMultiplier = lineWidth;
+            renderer.numCornerVertices = lineCornerVertices;
+            renderer.numCapVertices = lineCapVertices;
+        }
+
+        private List<Vector3> GenerateCurvedPath(List<Vector2Int> path, float radius, int samples)
+        {
+            var points = new List<Vector3>();
+            if (grid == null || path == null || path.Count == 0)
+            {
+                return points;
+            }
+
+            if (path.Count == 1)
+            {
+                points.Add(ToWorld(path[0]));
+                return points;
+            }
+
+            Vector3 ToWorld(Vector2Int cell)
+            {
+                var w = grid.CellToWorld(cell);
+                w.z = previewZOffset;
+                return w;
+            }
+
+            points.Add(ToWorld(path[0]));
+
+            for (int i = 1; i < path.Count - 1; i++)
+            {
+                var prev = path[i - 1];
+                var current = path[i];
+                var next = path[i + 1];
+
+                var dirPrev = current - prev;
+                var dirNext = next - current;
+
+                if (dirPrev == Vector2Int.zero || dirNext == Vector2Int.zero || dirPrev == dirNext)
+                {
+                    points.Add(ToWorld(current));
+                    continue;
+                }
+
+                Vector2 dirPrevNorm = ((Vector2)dirPrev).normalized;
+                Vector2 dirNextNorm = ((Vector2)dirNext).normalized;
+
+                float offset = Mathf.Min(radius, dirPrev.magnitude * 0.5f, dirNext.magnitude * 0.5f);
+                if (offset <= 0f)
+                {
+                    points.Add(ToWorld(current));
+                    continue;
+                }
+
+                var cornerWorld = ToWorld(current);
+                var entry = cornerWorld - new Vector3(dirPrevNorm.x, dirPrevNorm.y, 0f) * offset;
+                var exit = cornerWorld + new Vector3(dirNextNorm.x, dirNextNorm.y, 0f) * offset;
+
+                points.Add(entry);
+
+                for (int s = 1; s <= samples; s++)
+                {
+                    float t = s / (samples + 1f);
+                    points.Add(EvaluateQuadraticBezier(entry, cornerWorld, exit, t));
+                }
+
+                points.Add(exit);
+            }
+
+            points.Add(ToWorld(path[^1]));
+            return points;
+        }
+
+        private static Vector3 EvaluateQuadraticBezier(Vector3 start, Vector3 control, Vector3 end, float t)
+        {
+            float oneMinusT = 1f - t;
+            return oneMinusT * oneMinusT * start + 2f * oneMinusT * t * control + t * t * end;
+        }
+
+        private void SetRendererPositions(LineRenderer renderer, List<Vector3> points)
+        {
+            if (renderer == null || points == null || points.Count == 0) return;
+
+            renderer.positionCount = points.Count;
+            renderer.SetPositions(points.ToArray());
         }
 
         private void ApplyPipeColor(LineRenderer renderer)
@@ -617,6 +732,10 @@ namespace MachineRepair
             pipeDef.displayName = "Pipe";
             pipeDef.pipeColor = pipeColor;
             pipeDef.lineWidth = lineWidth;
+            pipeDef.cornerRadius = cornerRadius;
+            pipeDef.samplesPerCorner = samplesPerCorner;
+            pipeDef.lineCornerVertices = lineCornerVertices;
+            pipeDef.lineCapVertices = lineCapVertices;
             pipeDef.maxFlow = defaultFlow;
             pipeDef.maxPressure = defaultPressure;
         }
@@ -626,6 +745,10 @@ namespace MachineRepair
             if (pipeDef == null) return;
             pipeColor = pipeDef.pipeColor;
             lineWidth = pipeDef.lineWidth;
+            cornerRadius = pipeDef.cornerRadius;
+            samplesPerCorner = pipeDef.samplesPerCorner;
+            lineCornerVertices = pipeDef.lineCornerVertices;
+            lineCapVertices = pipeDef.lineCapVertices;
         }
     }
 }
