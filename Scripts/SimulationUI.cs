@@ -43,6 +43,10 @@ namespace MachineRepair
         [SerializeField] private Color activeColor = new Color(0.18f, 0.58f, 0.32f);
         [SerializeField] private Color inactiveColor = new Color(0.4f, 0.4f, 0.4f);
 
+        [Header("Debugging")]
+        [SerializeField] private bool logPoweredPaths = false;
+        [SerializeField] private TextMeshProUGUI powerDebugLabel;
+
         private readonly List<SpriteRenderer> arrowPool = new();
         private readonly List<Vector3> arrowBasePositions = new();
         private int activeArrowCount;
@@ -213,6 +217,7 @@ namespace MachineRepair
         {
             UpdateStatus();
             RefreshPipeArrows();
+            ShowPowerDebugInfo();
         }
 
         private void OnLeaksUpdated(IReadOnlyList<SimulationManager.LeakInfo> leaks)
@@ -463,6 +468,58 @@ namespace MachineRepair
                     kvp.Value.enabled = show;
                 }
             }
+        }
+
+        private void ShowPowerDebugInfo()
+        {
+            if (!logPoweredPaths || simulationManager == null || gridManager == null) return;
+
+            var snapshot = simulationManager.LastSnapshot;
+            if (snapshot == null || snapshot.Value.Voltage == null)
+            {
+                if (powerDebugLabel != null) powerDebugLabel.text = string.Empty;
+                return;
+            }
+
+            var voltage = snapshot.Value.Voltage;
+            int poweredCells = 0;
+            var poweredComponents = new List<string>();
+            var poweredComponentNames = new HashSet<string>();
+
+            for (int y = 0; y < gridManager.height; y++)
+            {
+                for (int x = 0; x < gridManager.width; x++)
+                {
+                    int idx = gridManager.ToIndex(new Vector2Int(x, y));
+                    if (idx < 0 || idx >= voltage.Length) continue;
+
+                    if (voltage[idx] > 0.01f)
+                    {
+                        poweredCells++;
+                        var cell = gridManager.GetCell(new Vector2Int(x, y));
+                        if (cell.component != null && cell.component.def != null)
+                        {
+                            if (poweredComponentNames.Add(cell.component.def.displayName))
+                            {
+                                poweredComponents.Add(cell.component.def.displayName);
+                            }
+                        }
+                    }
+                }
+            }
+
+            string componentList = poweredComponents.Count > 0
+                ? string.Join(", ", poweredComponents)
+                : "none";
+
+            string debugText = $"Powered cells: {poweredCells}\nPowered components: {componentList}";
+
+            if (powerDebugLabel != null)
+            {
+                powerDebugLabel.text = debugText;
+            }
+
+            Debug.Log(debugText);
         }
 
         private bool ShouldShowLeaks() => waterActive && isSimulationMode;
