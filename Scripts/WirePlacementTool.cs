@@ -32,6 +32,10 @@ namespace MachineRepair
         [SerializeField] private Color powerWireColor = Color.cyan;
         [SerializeField] private Color signalWireColor = new Color(0.8f, 0.5f, 1f, 1f);
         [SerializeField] private Color wireColor = Color.cyan;
+        [SerializeField, Min(0f)] private float cornerRadius = 0.2f;
+        [SerializeField, Min(0)] private int samplesPerCorner = 3;
+        [SerializeField, Min(0)] private int lineCornerVertices = 0;
+        [SerializeField, Min(0)] private int lineCapVertices = 0;
 
         [Header("Behavior")]
         [SerializeField] private WireType wireType = WireType.AC;
@@ -218,15 +222,28 @@ namespace MachineRepair
 
         private void UpdatePreviewToCursor()
         {
-            if (activePreview == null || !startCell.HasValue) return;
+            if (activePreview == null || !startCell.HasValue || grid == null || cam == null) return;
 
             if (pointAction != null)
                 pointerScreenPosition = pointAction.ReadValue<Vector2>();
 
             Vector3 worldPos = cam.ScreenToWorldPoint(new Vector3(pointerScreenPosition.x, pointerScreenPosition.y, Mathf.Abs(previewZOffset)));
+            var targetCell = grid.WorldToCell(worldPos);
             worldPos.z = previewZOffset;
 
-            activePreview.SetPosition(1, worldPos);
+            var path = FindPath(startCell.Value, targetCell);
+            if (path.Count == 0)
+            {
+                var startWorld = grid.CellToWorld(startCell.Value);
+                startWorld.z = previewZOffset;
+                activePreview.positionCount = 2;
+                activePreview.SetPosition(0, startWorld);
+                activePreview.SetPosition(1, worldPos);
+                return;
+            }
+
+            var previewPoints = GenerateCurvedPath(path, cornerRadius, samplesPerCorner);
+            SetRendererPositions(activePreview, previewPoints);
         }
 
         private void CacheInputActions()
@@ -283,7 +300,7 @@ namespace MachineRepair
             }
 
             ApplyWireColor(activePreview);
-            activePreview.widthMultiplier = lineWidth;
+            ConfigureLineRenderer(activePreview);
         }
 
         private List<Vector2Int> FindPath(Vector2Int start, Vector2Int goal)
@@ -393,15 +410,93 @@ namespace MachineRepair
             }
 
             ApplyWireColor(renderer);
-            renderer.positionCount = path.Count;
-            for (int i = 0; i < path.Count; i++)
-            {
-                var world = grid.CellToWorld(path[i]);
-                world.z = previewZOffset;
-                renderer.SetPosition(i, world);
-            }
+            ConfigureLineRenderer(renderer);
+
+            var renderedPoints = GenerateCurvedPath(path, cornerRadius, samplesPerCorner);
+            SetRendererPositions(renderer, renderedPoints);
 
             placedWires.Add(renderer);
+        }
+
+        private List<Vector3> GenerateCurvedPath(List<Vector2Int> path, float radius, int samplesPerCorner)
+        {
+            var points = new List<Vector3>();
+            if (grid == null || path == null || path.Count == 0)
+            {
+                return points;
+            }
+
+            if (path.Count == 1)
+            {
+                points.Add(ToWorld(path[0]));
+                return points;
+            }
+
+            Vector3 ToWorld(Vector2Int cell)
+            {
+                var w = grid.CellToWorld(cell);
+                w.z = previewZOffset;
+                return w;
+            }
+
+            points.Add(ToWorld(path[0]));
+
+            for (int i = 1; i < path.Count - 1; i++)
+            {
+                var prev = path[i - 1];
+                var current = path[i];
+                var next = path[i + 1];
+
+                var dirPrev = current - prev;
+                var dirNext = next - current;
+
+                if (dirPrev == Vector2Int.zero || dirNext == Vector2Int.zero || dirPrev == dirNext)
+                {
+                    points.Add(ToWorld(current));
+                    continue;
+                }
+
+                Vector2 dirPrevNorm = ((Vector2)dirPrev).normalized;
+                Vector2 dirNextNorm = ((Vector2)dirNext).normalized;
+
+                float offset = Mathf.Min(radius, dirPrev.magnitude * 0.5f, dirNext.magnitude * 0.5f);
+                if (offset <= 0f)
+                {
+                    points.Add(ToWorld(current));
+                    continue;
+                }
+
+                var cornerWorld = ToWorld(current);
+                var entry = cornerWorld - new Vector3(dirPrevNorm.x, dirPrevNorm.y, 0f) * offset;
+                var exit = cornerWorld + new Vector3(dirNextNorm.x, dirNextNorm.y, 0f) * offset;
+
+                points.Add(entry);
+
+                for (int s = 1; s <= samplesPerCorner; s++)
+                {
+                    float t = s / (samplesPerCorner + 1f);
+                    points.Add(EvaluateQuadraticBezier(entry, cornerWorld, exit, t));
+                }
+
+                points.Add(exit);
+            }
+
+            points.Add(ToWorld(path[^1]));
+            return points;
+        }
+
+        private static Vector3 EvaluateQuadraticBezier(Vector3 start, Vector3 control, Vector3 end, float t)
+        {
+            float oneMinusT = 1f - t;
+            return oneMinusT * oneMinusT * start + 2f * oneMinusT * t * control + t * t * end;
+        }
+
+        private void SetRendererPositions(LineRenderer renderer, List<Vector3> points)
+        {
+            if (renderer == null || points == null || points.Count == 0) return;
+
+            renderer.positionCount = points.Count;
+            renderer.SetPositions(points.ToArray());
         }
 
         private void ApplyWireColor(LineRenderer renderer)
@@ -409,6 +504,15 @@ namespace MachineRepair
             if (renderer == null) return;
             renderer.startColor = wireColor;
             renderer.endColor = wireColor;
+        }
+
+        private void ConfigureLineRenderer(LineRenderer renderer)
+        {
+            if (renderer == null) return;
+
+            renderer.widthMultiplier = lineWidth;
+            renderer.numCornerVertices = lineCornerVertices;
+            renderer.numCapVertices = lineCapVertices;
         }
 
         /// <summary>
