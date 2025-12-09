@@ -1,21 +1,17 @@
 using System;
 using System.Collections.Generic;
 using MachineRepair.Grid;
-using MachineRepair.Pathing;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace MachineRepair
 {
     /// <summary>
-    /// Handles pipe placement with diagonal and orthogonal moves while
-    /// rejecting sharp turns. Mirrors the wire placement tool flow but
-    /// applies a 120-degree minimum turn angle for bend validation.
+    /// Handles pipe placement with diagonal and orthogonal moves.
+    /// Mirrors the wire placement tool flow without enforcing bend limits.
     /// </summary>
     public class PipePlacementTool : MonoBehaviour
     {
-        private const float MinTurnAngleDegrees = 120f;
-
         private struct PathState : IEquatable<PathState>
         {
             public Vector2Int Position;
@@ -407,10 +403,7 @@ namespace MachineRepair
 
         private bool IsDirectionAllowed(Vector2Int currentDirection, Vector2Int candidateDirection)
         {
-            if (currentDirection == Vector2Int.zero) return true;
-
-            float angle = Vector2.Angle(currentDirection, candidateDirection);
-            return angle <= 45f;
+            return candidateDirection != Vector2Int.zero;
         }
 
         private void RecordDebugCandidate(Vector2Int from, Vector2Int to, bool accepted, string reason)
@@ -439,29 +432,6 @@ namespace MachineRepair
                 return;
             }
 
-            if (!PathEvaluation.IsTurnAllowed(current.Direction, direction, MinTurnAngleDegrees))
-            {
-                if (PathEvaluation.TryBuildWideTurn(current.Direction, direction, MinTurnAngleDegrees,
-                        out var firstDiagonal, out var secondDiagonal))
-                {
-                    bool handled = TryEnqueueWideTurn(
-                        start,
-                        goal,
-                        avoidExistingRuns,
-                        cameFrom,
-                        frontier,
-                        visited,
-                        current,
-                        firstDiagonal,
-                        secondDiagonal);
-
-                    if (handled) return;
-                }
-
-                RecordDebugCandidate(current.Position, candidate, false, "Turn too sharp");
-                return;
-            }
-
             if (!IsCellPassable(start, goal, avoidExistingRuns, candidate, nextCell, out var reason))
             {
                 RecordDebugCandidate(current.Position, candidate, false, reason);
@@ -475,55 +445,6 @@ namespace MachineRepair
             frontier.Enqueue(nextState);
             cameFrom[nextState] = current;
             RecordDebugCandidate(current.Position, candidate, true, "Accepted");
-        }
-
-        private bool TryEnqueueWideTurn(
-            Vector2Int start,
-            Vector2Int goal,
-            bool avoidExistingRuns,
-            Dictionary<PathState, PathState> cameFrom,
-            Queue<PathState> frontier,
-            HashSet<PathState> visited,
-            PathState current,
-            Vector2Int firstDiagonal,
-            Vector2Int secondDiagonal)
-        {
-            var firstPosition = current.Position + firstDiagonal;
-            if (!grid.InBounds(firstPosition.x, firstPosition.y)) return false;
-            if (!grid.TryGetCell(firstPosition, out var firstCell)) return false;
-            if (!IsCellPassable(start, goal, avoidExistingRuns, firstPosition, firstCell, out var firstReason))
-            {
-                RecordDebugCandidate(current.Position, firstPosition, false, firstReason);
-                return false;
-            }
-
-            var firstState = new PathState(firstPosition, firstDiagonal);
-            if (!visited.Contains(firstState))
-            {
-                visited.Add(firstState);
-                frontier.Enqueue(firstState);
-                cameFrom[firstState] = current;
-                RecordDebugCandidate(current.Position, firstPosition, true, "Wide turn first");
-            }
-
-            var secondPosition = firstPosition + secondDiagonal;
-            if (!grid.InBounds(secondPosition.x, secondPosition.y)) return true; // first step is usable; second is out of bounds
-            if (!grid.TryGetCell(secondPosition, out var secondCell)) return true;
-            if (!PathEvaluation.IsTurnAllowed(firstDiagonal, secondDiagonal, MinTurnAngleDegrees)) return true;
-            if (!IsCellPassable(start, goal, avoidExistingRuns, secondPosition, secondCell, out var secondReason))
-            {
-                RecordDebugCandidate(firstPosition, secondPosition, false, secondReason);
-                return true;
-            }
-
-            var secondState = new PathState(secondPosition, secondDiagonal);
-            if (visited.Contains(secondState)) return true;
-
-            visited.Add(secondState);
-            frontier.Enqueue(secondState);
-            cameFrom[secondState] = firstState;
-            RecordDebugCandidate(firstPosition, secondPosition, true, "Wide turn second");
-            return true;
         }
 
         private bool IsCellPassable(

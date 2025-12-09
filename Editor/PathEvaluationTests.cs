@@ -9,25 +9,25 @@ namespace MachineRepair.Tests
         [Test]
         public void ZeroPreviousDirection_AllowsInitialStep()
         {
-            Assert.IsTrue(PathEvaluation.IsTurnAllowed(Vector2Int.zero, Vector2Int.right, 120f));
+            Assert.IsTrue(PathEvaluation.IsTurnAllowed(Vector2Int.zero, Vector2Int.right));
         }
 
         [Test]
-        public void RightAngleTurn_IsRejected()
+        public void RightAngleTurn_IsAllowed()
         {
-            Assert.IsFalse(PathEvaluation.IsTurnAllowed(Vector2Int.up, Vector2Int.right, 120f));
+            Assert.IsTrue(PathEvaluation.IsTurnAllowed(Vector2Int.up, Vector2Int.right));
         }
 
         [Test]
-        public void ObtuseDiagonalTurn_IsAllowed()
+        public void AcuteDiagonalTurn_IsAllowed()
         {
-            Assert.IsTrue(PathEvaluation.IsTurnAllowed(Vector2Int.right, new Vector2Int(-1, 1), 120f));
+            Assert.IsTrue(PathEvaluation.IsTurnAllowed(new Vector2Int(1, 1), Vector2Int.right));
         }
 
         [Test]
-        public void AcuteDiagonalZigZag_IsRejected()
+        public void ZeroDirection_IsRejected()
         {
-            Assert.IsFalse(PathEvaluation.IsTurnAllowed(new Vector2Int(1, 1), Vector2Int.right, 120f));
+            Assert.IsFalse(PathEvaluation.IsTurnAllowed(Vector2Int.up, Vector2Int.zero));
         }
     }
 }
