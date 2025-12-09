@@ -133,6 +133,7 @@ namespace MachineRepair
 
             powerOn = enabled;
             stepTimer = 0f;
+            UpdateChassisPowerAvailability(powerOn);
             ApplyWireBloom(completedCircuitWires, powerOn);
             PowerToggled?.Invoke(powerOn);
         }
@@ -768,6 +769,23 @@ namespace MachineRepair
             public float[] Flow;
             public bool[] Signals;
             public IReadOnlyList<string> Faults;
+        }
+
+        private void UpdateChassisPowerAvailability(bool powerEnabled)
+        {
+            if (grid == null) return;
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null || cell.component.def == null) continue;
+                    if (cell.component.def.type != ComponentType.ChassisPowerConnection) continue;
+
+                    grid.SetPower(new Vector2Int(x, y), powerEnabled);
+                }
+            }
         }
 
         public struct LeakInfo
