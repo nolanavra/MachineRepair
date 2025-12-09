@@ -16,6 +16,7 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private GridManager grid;
     [SerializeField] private Inventory inventory;
     [SerializeField] private WirePlacementTool wireTool;
+    [SerializeField] private SimulationManager simulationManager;
 
     [Header("UI Elements")]
     [SerializeField] private Text titleText;
@@ -25,12 +26,15 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private GameObject panelRoot;
     [SerializeField] private CanvasGroup panelCanvasGroup;
 
+    private InputRouter.SelectionInfo currentSelection;
+
     private void Awake()
     {
         if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
         if (grid == null) grid = FindFirstObjectByType<GridManager>();
         if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
         if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
+        if (simulationManager == null) simulationManager = FindFirstObjectByType<SimulationManager>();
     }
 
     private void OnEnable()
@@ -49,6 +53,13 @@ public class InspectorUI : MonoBehaviour
         {
             wireTool.ConnectionRegistered += OnWireConnectionRegistered;
         }
+
+        if (simulationManager != null)
+        {
+            simulationManager.PowerToggled += OnSimulationStateChanged;
+            simulationManager.WaterToggled += OnSimulationStateChanged;
+            simulationManager.SimulationStepCompleted += OnSimulationStepCompleted;
+        }
     }
 
     private void OnDisable()
@@ -58,10 +69,19 @@ public class InspectorUI : MonoBehaviour
 
         if (wireTool != null)
             wireTool.ConnectionRegistered -= OnWireConnectionRegistered;
+
+        if (simulationManager != null)
+        {
+            simulationManager.PowerToggled -= OnSimulationStateChanged;
+            simulationManager.WaterToggled -= OnSimulationStateChanged;
+            simulationManager.SimulationStepCompleted -= OnSimulationStepCompleted;
+        }
     }
 
     private void OnSelectionChanged(InputRouter.SelectionInfo selection)
     {
+        currentSelection = selection;
+
         if (!selection.hasSelection)
         {
             ClearDisplay();
@@ -87,6 +107,22 @@ public class InspectorUI : MonoBehaviour
         }
     }
 
+    private void OnSimulationStepCompleted()
+    {
+        if (currentSelection.hasSelection)
+        {
+            OnSelectionChanged(currentSelection);
+        }
+    }
+
+    private void OnSimulationStateChanged(bool _)
+    {
+        if (currentSelection.hasSelection)
+        {
+            OnSelectionChanged(currentSelection);
+        }
+    }
+
     private void PresentComponent(InputRouter.SelectionInfo selection)
     {
         var def = ResolveComponentDef(selection.cellData.component);
@@ -95,7 +131,7 @@ public class InspectorUI : MonoBehaviour
         SetTitle(displayName);
         SetDescription(def?.description);
         SetConnections(BuildConnectionSummary(selection.cell));
-        SetParameters(BuildComponentParameters(def));
+        SetParameters(BuildComponentParameters(selection, def));
     }
 
     private void PresentPipe(InputRouter.SelectionInfo selection)
@@ -106,16 +142,16 @@ public class InspectorUI : MonoBehaviour
         SetParameters("No simulation parameters for pipes.");
     }
 
-        private void PresentWire(InputRouter.SelectionInfo selection)
-        {
-            var wire = selection.cellData.GetWireAt(selection.wireIndex);
-            WireType wireType = wire != null ? wire.wireType : WireType.None;
-            string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
-            SetTitle(wireLabel);
-            SetDescription("Carries electrical or signal connections between components.");
-            SetConnections(BuildWireConnectionSummary(selection.cell, selection.wireIndex));
-            SetParameters(BuildWireParameters(selection.cellData, selection.wireIndex));
-        }
+    private void PresentWire(InputRouter.SelectionInfo selection)
+    {
+        var wire = selection.cellData.GetWireAt(selection.wireIndex);
+        WireType wireType = wire != null ? wire.wireType : WireType.None;
+        string wireLabel = wireType != WireType.None ? $"{wireType} Wire" : "Wire";
+        SetTitle(wireLabel);
+        SetDescription("Carries electrical or signal connections between components.");
+        SetConnections(BuildWireConnectionSummary(selection.cell, selection.wireIndex));
+        SetParameters(BuildWireParameters(selection.cellData, selection.wireIndex));
+    }
 
     private void PresentEmpty(InputRouter.SelectionInfo selection)
     {
@@ -139,24 +175,59 @@ public class InspectorUI : MonoBehaviour
         return component != null ? component.def : null;
     }
 
-    private string BuildComponentParameters(ThingDef def)
+    private string BuildComponentParameters(InputRouter.SelectionInfo selection, ThingDef def)
     {
         if (def == null) return "No simulation parameters available.";
 
         var sb = new StringBuilder();
         sb.AppendLine("Simulation Parameters:");
-        sb.AppendLine($"- Requires Power: {def.requiresPower}");
-        sb.AppendLine($"- AC Passthrough: {def.passthroughPower}");
-        sb.AppendLine($"- Water Passthrough: {def.passthroughWater}");
-        sb.AppendLine($"- Max Pressure: {def.maxPressure} bar");
-        sb.AppendLine($"- Max AC Voltage: {def.maxACVoltage}V");
-        sb.AppendLine($"- Max DC Voltage: {def.maxDCVoltage}V");
-        sb.AppendLine($"- Wattage: {def.wattage}W");
-        sb.AppendLine($"- Flow Coefficient: {def.flowCoef}");
-        sb.AppendLine($"- Volume: {def.volumeL} L");
-        sb.AppendLine($"- Heat Rate: {def.heatRateW} W");
-        sb.AppendLine($"- Temperature: {def.temperatureC} °C");
-        sb.AppendLine($"- Target Temp Range: {def.targetTempMin} - {def.targetTempMax} °C");
+
+        bool powered = false;
+        float flowIn = 0f;
+        float pressure = 0f;
+
+        if (grid != null && simulationManager != null && simulationManager.LastSnapshot.HasValue)
+        {
+            Vector2Int targetCell = selection.cellData.component != null
+                ? selection.cellData.component.anchorCell
+                : selection.cell;
+
+            if (!grid.InBounds(targetCell.x, targetCell.y))
+            {
+                return "Simulation data unavailable (out of bounds).";
+            }
+
+            int idx = grid.ToIndex(targetCell);
+            var snapshot = simulationManager.LastSnapshot.Value;
+
+            if (snapshot.Voltage != null && idx >= 0 && idx < snapshot.Voltage.Length)
+            {
+                powered = simulationManager.PowerOn && snapshot.Voltage[idx] > 0.01f;
+            }
+
+            if (snapshot.Flow != null && idx >= 0 && idx < snapshot.Flow.Length)
+            {
+                flowIn = simulationManager.WaterOn ? snapshot.Flow[idx] : 0f;
+            }
+
+            if (snapshot.Pressure != null && idx >= 0 && idx < snapshot.Pressure.Length)
+            {
+                pressure = simulationManager.WaterOn ? snapshot.Pressure[idx] : 0f;
+            }
+        }
+
+        sb.AppendLine($"- Powered: {powered}");
+        sb.AppendLine($"- Water Flow In: {flowIn:F2}");
+
+        if (def.type == ComponentType.Boiler)
+        {
+            float fillPercent = def.maxPressure > 0f ? Mathf.Clamp01(pressure / def.maxPressure) * 100f : 0f;
+            float temperature = powered ? Mathf.Max(def.targetTempMin, def.temperatureC) : def.temperatureC;
+
+            sb.AppendLine($"- Fill: {fillPercent:F0}%");
+            sb.AppendLine($"- Temperature: {temperature:F1} °C");
+        }
+
         return sb.ToString();
     }
 
