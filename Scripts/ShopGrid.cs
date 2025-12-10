@@ -352,6 +352,9 @@ namespace MachineRepair.Grid
             }
 
             var sprite = machine.def != null ? machine.def.displaySprite : null;
+            var displayTrim = machine.def != null
+                ? new Vector3(machine.def.displayTrimX, machine.def.displayTrimY, 0f)
+                : Vector3.zero;
             if (sprite == null || displayCells == null || displayCells.Count == 0)
             {
                 machine.DestroyDisplaySprites();
@@ -362,7 +365,7 @@ namespace MachineRepair.Grid
                 this,
                 sprite,
                 displayCells,
-                subGridDisplayOffset,
+                subGridDisplayOffset + displayTrim,
                 displaySpriteSortingLayer,
                 displaySpriteSortingOrder);
         }
