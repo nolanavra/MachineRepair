@@ -30,6 +30,8 @@ namespace MachineRepair
         [Min(1f)]
         [SerializeField] private float arrowTravelCells = 2f;
         [SerializeField] private float arrowScrollSpeed = 1.25f;
+        [SerializeField, Tooltip("Degrees per second to rotate arrows toward their travel direction.")]
+        private float arrowRotationSpeed = 720f;
 
         [Header("Leaks")]
         [Tooltip("Sprite rendered where a leaking pipe cell is detected.")]
@@ -51,6 +53,7 @@ namespace MachineRepair
         private readonly List<Vector3> arrowBasePositions = new();
         private readonly List<Vector3> arrowDirections = new();
         private readonly List<float> arrowSpeeds = new();
+        private readonly List<Vector3> arrowPreviousPositions = new();
         private int activeArrowCount;
         private float arrowSegmentLength = 1f;
         private float arrowTravelDistance = 2f;
@@ -232,6 +235,7 @@ namespace MachineRepair
                 arrowBasePositions[i] = arrow.Position;
                 arrowDirections[i] = direction;
                 arrowSpeeds[i] = Mathf.Max(0f, arrow.Speed);
+                arrowPreviousPositions[i] = arrow.Position;
 
                 renderer.transform.position = arrow.Position;
                 renderer.transform.up = direction;
@@ -259,7 +263,17 @@ namespace MachineRepair
                 if (renderer == null || !renderer.enabled) continue;
 
                 float offset = Mathf.Repeat(Time.time * arrowScrollSpeed * arrowSpeeds[i], arrowTravelDistance);
-                renderer.transform.position = arrowBasePositions[i] + arrowDirections[i] * offset;
+                Vector3 nextPosition = arrowBasePositions[i] + arrowDirections[i] * offset;
+                Vector3 travelDelta = nextPosition - arrowPreviousPositions[i];
+                Vector3 targetDirection = travelDelta.sqrMagnitude > 0.0001f
+                    ? travelDelta.normalized
+                    : arrowDirections[i];
+
+                Quaternion targetRotation = Quaternion.LookRotation(Vector3.forward, targetDirection);
+                renderer.transform.rotation = Quaternion.RotateTowards(renderer.transform.rotation, targetRotation,
+                    arrowRotationSpeed * Time.deltaTime);
+                renderer.transform.position = nextPosition;
+                arrowPreviousPositions[i] = nextPosition;
             }
         }
 
@@ -291,6 +305,11 @@ namespace MachineRepair
             while (arrowSpeeds.Count < desiredSize)
             {
                 arrowSpeeds.Add(0f);
+            }
+
+            while (arrowPreviousPositions.Count < desiredSize)
+            {
+                arrowPreviousPositions.Add(Vector3.zero);
             }
         }
 
