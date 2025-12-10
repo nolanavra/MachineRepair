@@ -317,6 +317,7 @@ namespace MachineRepair.Grid
             if (grid != null)
             {
                 grid.ApplyPortMarkers(machine);
+                grid.ApplyDisplaySprites(machine, footprintCells.DisplayCells);
             }
 
             ExitPlacementMode();

@@ -28,6 +28,8 @@ namespace MachineRepair {
         [Header("Runtime")]
         [SerializeField] private Transform portMarkerParent;
         [SerializeField] private List<SpriteRenderer> portMarkers = new();
+        [SerializeField] private Transform displaySpriteParent;
+        [SerializeField] private List<SpriteRenderer> displaySprites = new();
 
         [Header("Connections")]
         [SerializeField] private List<MachineComponent> powerConnections = new();
@@ -133,9 +135,64 @@ namespace MachineRepair {
             portMarkers.Clear();
         }
 
+        public void RefreshDisplaySprites(
+            GridManager owningGrid,
+            Sprite sprite,
+            IReadOnlyList<Vector2Int> displayCells,
+            Vector3 subGridOffset,
+            string sortingLayer,
+            int sortingOrder)
+        {
+            if (displaySprites == null) displaySprites = new List<SpriteRenderer>();
+
+            int activeCount = 0;
+            if (owningGrid != null && sprite != null && displayCells != null)
+            {
+                EnsureDisplaySpriteParent();
+
+                for (int i = 0; i < displayCells.Count; i++)
+                {
+                    var cell = displayCells[i];
+                    if (!owningGrid.InBounds(cell.x, cell.y)) continue;
+
+                    var renderer = EnsureDisplaySprite(activeCount, sprite, sortingLayer, sortingOrder);
+                    renderer.transform.position = owningGrid.CellToWorld(cell) + subGridOffset;
+                    renderer.transform.rotation = Quaternion.identity;
+                    renderer.gameObject.SetActive(true);
+                    activeCount++;
+                }
+            }
+
+            for (int i = activeCount; i < displaySprites.Count; i++)
+            {
+                if (displaySprites[i] != null)
+                {
+                    displaySprites[i].gameObject.SetActive(false);
+                }
+            }
+        }
+
+        public void DestroyDisplaySprites()
+        {
+            for (int i = 0; i < displaySprites.Count; i++)
+            {
+                if (displaySprites[i] != null)
+                {
+                    var target = displaySprites[i].gameObject;
+                    if (Application.isPlaying)
+                        Object.Destroy(target);
+                    else
+                        Object.DestroyImmediate(target);
+                }
+            }
+
+            displaySprites.Clear();
+        }
+
         private void OnDestroy()
         {
             DestroyPortMarkers();
+            DestroyDisplaySprites();
         }
 
         private static Vector2Int RotateOffset(Vector2Int offset, int rotationSteps)
@@ -175,6 +232,38 @@ namespace MachineRepair {
             }
 
             var result = portMarkers[index];
+            result.sortingLayerName = sortingLayer;
+            result.sortingOrder = sortingOrder;
+            result.sprite = sprite;
+            return result;
+        }
+
+        private void EnsureDisplaySpriteParent()
+        {
+            if (displaySpriteParent == null)
+            {
+                var go = new GameObject("displaySprites");
+                go.transform.SetParent(transform, worldPositionStays: true);
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localRotation = Quaternion.identity;
+                displaySpriteParent = go.transform;
+            }
+        }
+
+        private SpriteRenderer EnsureDisplaySprite(int index, Sprite sprite, string sortingLayer, int sortingOrder)
+        {
+            while (displaySprites.Count <= index)
+            {
+                var go = new GameObject("displaySprite");
+                go.transform.SetParent(displaySpriteParent, worldPositionStays: true);
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sortingLayerName = sortingLayer;
+                renderer.sortingOrder = sortingOrder;
+                renderer.sprite = sprite;
+                displaySprites.Add(renderer);
+            }
+
+            var result = displaySprites[index];
             result.sortingLayerName = sortingLayer;
             result.sortingOrder = sortingOrder;
             result.sprite = sprite;

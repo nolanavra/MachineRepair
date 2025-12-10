@@ -85,6 +85,11 @@ namespace MachineRepair.Grid
         [SerializeField] private bool mirrorHighlightsToSubGrid = true;
         [SerializeField] private Vector3 subGridHighlightOffset = new Vector3(0f, -50f, 0f);
 
+        [Header("Display Sprites")]
+        [SerializeField] private Vector3 subGridDisplayOffset = new Vector3(0f, -50f, 0f);
+        [SerializeField] private string displaySpriteSortingLayer = "Default";
+        [SerializeField] private int displaySpriteSortingOrder = 400;
+
         private SpriteRenderer[] cellHighlights;
         private SpriteRenderer[] subGridHighlights;
 
@@ -186,6 +191,7 @@ namespace MachineRepair.Grid
                 if (TryPlaceComponentFootprint(component, footprintCells.OccupiedCells))
                 {
                     ApplyPortMarkers(component);
+                    ApplyDisplaySprites(component, footprintCells.DisplayCells);
                 }
             }
         }
@@ -336,6 +342,29 @@ namespace MachineRepair.Grid
                 portMarkerPowerColor,
                 portMarkerWaterColor,
                 portMarkerSignalColor);
+        }
+
+        public void ApplyDisplaySprites(MachineComponent machine, IReadOnlyList<Vector2Int> displayCells)
+        {
+            if (machine == null)
+            {
+                return;
+            }
+
+            var sprite = machine.def != null ? machine.def.displaySprite : null;
+            if (sprite == null || displayCells == null || displayCells.Count == 0)
+            {
+                machine.DestroyDisplaySprites();
+                return;
+            }
+
+            machine.RefreshDisplaySprites(
+                this,
+                sprite,
+                displayCells,
+                subGridDisplayOffset,
+                displaySpriteSortingLayer,
+                displaySpriteSortingOrder);
         }
 
         public void UpdateSubGrid()
