@@ -24,6 +24,18 @@ namespace MachineRepair.Grid
         private CellOccupancy[] occupancyByIndex;
         public cellDef[] cellSubGrid;
 
+        public readonly struct FootprintCells
+        {
+            public readonly List<Vector2Int> OccupiedCells;
+            public readonly List<Vector2Int> DisplayCells;
+
+            public FootprintCells(List<Vector2Int> occupiedCells, List<Vector2Int> displayCells)
+            {
+                OccupiedCells = occupiedCells ?? new List<Vector2Int>();
+                DisplayCells = displayCells ?? new List<Vector2Int>();
+            }
+        }
+
 
         [Header("Spills (0..n liters depth proxy)")]
         private float[] spillByIndex;
@@ -134,7 +146,8 @@ namespace MachineRepair.Grid
                 terrainByIndex[i] = new CellTerrain
                 {
                     index = i,
-                    placeability = placeability
+                    placeability = placeability,
+                    isDisplayZone = placeability == CellPlaceability.Display
                 };
             }
 
@@ -170,7 +183,7 @@ namespace MachineRepair.Grid
                 if (!IsFootprintPlaceable(footprintCells)) continue;
 
                 var component = CreateComponentInstance(def, gridCell);
-                if (TryPlaceComponentFootprint(component, footprintCells))
+                if (TryPlaceComponentFootprint(component, footprintCells.OccupiedCells))
                 {
                     ApplyPortMarkers(component);
                 }
@@ -192,64 +205,88 @@ namespace MachineRepair.Grid
             return true;
         }
 
-        private bool IsFootprintPlaceable(IReadOnlyList<Vector2Int> cells)
+        private bool IsFootprintPlaceable(FootprintCells cells)
         {
-            if (cells == null || cells.Count == 0) return false;
+            bool hasAnyCells = (cells.OccupiedCells != null && cells.OccupiedCells.Count > 0)
+                || (cells.DisplayCells != null && cells.DisplayCells.Count > 0);
+            if (!hasAnyCells) return false;
 
-            for (int i = 0; i < cells.Count; i++)
+            HashSet<Vector2Int> displayCells = null;
+            if (cells.DisplayCells != null && cells.DisplayCells.Count > 0)
             {
-                var c = cells[i];
-                if (!InBounds(c.x, c.y)) return false;
+                displayCells = new HashSet<Vector2Int>(cells.DisplayCells);
+            }
 
-                int idx = ToIndex(c);
-                var terrain = terrainByIndex[idx];
-                if (terrain.placeability == CellPlaceability.Blocked || terrain.placeability == CellPlaceability.ConnectorsOnly)
-                    return false;
+            if (cells.DisplayCells != null)
+            {
+                for (int i = 0; i < cells.DisplayCells.Count; i++)
+                {
+                    var c = cells.DisplayCells[i];
+                    if (!InBounds(c.x, c.y)) return false;
 
-                if (occupancyByIndex[idx].HasComponent)
-                    return false;
+                    int idx = ToIndex(c);
+                    var terrain = terrainByIndex[idx];
+                    if (terrain.placeability != CellPlaceability.Display) return false;
+                    if (occupancyByIndex[idx].HasComponent) return false;
+                }
+            }
+
+            if (cells.OccupiedCells != null)
+            {
+                for (int i = 0; i < cells.OccupiedCells.Count; i++)
+                {
+                    var c = cells.OccupiedCells[i];
+                    if (displayCells != null && displayCells.Contains(c)) continue;
+                    if (!InBounds(c.x, c.y)) return false;
+
+                    int idx = ToIndex(c);
+                    var terrain = terrainByIndex[idx];
+                    if (terrain.placeability == CellPlaceability.Blocked
+                        || terrain.placeability == CellPlaceability.ConnectorsOnly
+                        || terrain.placeability == CellPlaceability.Display)
+                        return false;
+
+                    if (occupancyByIndex[idx].HasComponent)
+                        return false;
+                }
             }
 
             return true;
         }
 
-        private List<Vector2Int> GetFootprintCells(Vector2Int anchorCell, FootprintMask footprint)
+        public FootprintCells GetFootprintCells(Vector2Int anchorCell, FootprintMask footprint, int rotationSteps = 0)
         {
-            var cells = new List<Vector2Int>();
+            var occupiedCells = new List<Vector2Int>();
+            var displayCells = new List<Vector2Int>();
+            if (footprint.occupied == null) return new FootprintCells(occupiedCells, displayCells);
 
             for (int y = 0; y < footprint.height; y++)
             {
                 for (int x = 0; x < footprint.width; x++)
                 {
-                    if (!footprint.occupied[y * footprint.width + x]) continue;
+                    int idx = y * footprint.width + x;
+                    bool occupied = footprint.occupied[idx];
+                    bool display = footprint.display != null && footprint.display.Length > idx && footprint.display[idx];
+
+                    if (!occupied && !display) continue;
 
                     Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
-                    cells.Add(anchorCell + local);
+                    Vector2Int rotated = RotateOffset(local, rotationSteps);
+                    Vector2Int cell = anchorCell + rotated;
+
+                    if (occupied) occupiedCells.Add(cell);
+                    if (display && !displayCells.Contains(cell)) displayCells.Add(cell);
                 }
             }
 
-            return cells;
+            return new FootprintCells(occupiedCells, displayCells);
         }
 
-        private List<Vector2Int> GetFootprintCells(MachineComponent component)
+        private FootprintCells GetFootprintCells(MachineComponent component)
         {
-            var cells = new List<Vector2Int>();
-            if (component == null || component.footprint.occupied == null) return cells;
+            if (component == null || component.footprint.occupied == null) return new FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
 
-            FootprintMask footprint = component.footprint;
-            for (int y = 0; y < footprint.height; y++)
-            {
-                for (int x = 0; x < footprint.width; x++)
-                {
-                    if (!footprint.occupied[y * footprint.width + x]) continue;
-
-                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
-                    Vector2Int rotated = RotateOffset(local, component.rotation);
-                    cells.Add(component.anchorCell + rotated);
-                }
-            }
-
-            return cells;
+            return GetFootprintCells(component.anchorCell, component.footprint, component.rotation);
         }
 
         private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell)
@@ -330,7 +367,8 @@ namespace MachineRepair.Grid
                 return new cellDef
                 {
                     index = index,
-                    placeability = CellPlaceability.Blocked
+                    placeability = CellPlaceability.Blocked,
+                    isDisplayZone = false
                 };
             }
 
@@ -537,7 +575,7 @@ namespace MachineRepair.Grid
             if (!InBounds(c.x, c.y)) return false;
             int i = ToIndex(c);
             var placeability = terrainByIndex[i].placeability;
-            if (placeability == CellPlaceability.Blocked || placeability == CellPlaceability.ConnectorsOnly) return false;
+            if (placeability == CellPlaceability.Blocked || placeability == CellPlaceability.ConnectorsOnly || placeability == CellPlaceability.Display) return false;
 
             var occupancy = occupancyByIndex[i];
             if (occupancy.HasComponent) return false;
@@ -571,12 +609,13 @@ namespace MachineRepair.Grid
             if (component == null) return false;
 
             var footprintCells = GetFootprintCells(component);
-            if (footprintCells.Count == 0) return false;
+            var occupiedCells = footprintCells.OccupiedCells;
+            if (occupiedCells == null || occupiedCells.Count == 0) return false;
 
             bool removedAny = false;
-            for (int i = 0; i < footprintCells.Count; i++)
+            for (int i = 0; i < occupiedCells.Count; i++)
             {
-                var cell = footprintCells[i];
+                var cell = occupiedCells[i];
                 if (!InBounds(cell.x, cell.y)) continue;
 
                 int idx = ToIndex(cell);

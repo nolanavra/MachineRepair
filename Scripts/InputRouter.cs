@@ -58,6 +58,7 @@ namespace MachineRepair.Grid
         [SerializeField] private bool highlightEnable = true;
         [Tooltip("Tint (alpha controls transparency).")]
         [SerializeField] private Color highlightTint = new Color(1f, 1f, 0f, 0.25f); // soft yellow, 25% alpha
+        [SerializeField] private Color displayRequirementTint = new Color(1f, 0.65f, 0f, 0.25f);
         [Tooltip("Optional Scaling (1,1 fits a 1x1 cell).")]
         [SerializeField] private Vector2 highlightScale = new Vector2(1f, 1f);
         [SerializeField] private string highlightSortingLayer = "Default";
@@ -301,14 +302,15 @@ namespace MachineRepair.Grid
             if (currentPlacementDef == null) return;
 
             var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
-            if (!IsFootprintValid(footprintCells)) return;
+            var validation = ValidateFootprint(footprintCells);
+            if (!validation.IsValid) return;
 
             MachineComponent machine = CreatePlacedComponent(cellPos, footprintCells);
             if (machine == null) return;
 
-            for (int i = 0; i < footprintCells.Count; i++)
+            for (int i = 0; i < footprintCells.OccupiedCells.Count; i++)
             {
-                var target = footprintCells[i];
+                var target = footprintCells.OccupiedCells[i];
                 grid.TryPlaceComponent(target, machine, markTerrainConnectorsOnly: true);
             }
 
@@ -570,8 +572,8 @@ namespace MachineRepair.Grid
             if (isPlacement)
             {
                 var cells = GetFootprintCells(pos, currentPlacementDef, currentRotation);
-                bool valid = IsFootprintValid(cells);
-                SetFootprintHighlights(cells, valid);
+                var validation = ValidateFootprint(cells);
+                SetFootprintHighlights(cells, validation);
                 if (highlightObject != null) highlightObject.SetActive(false);
             }
             else
@@ -650,60 +652,108 @@ namespace MachineRepair.Grid
             currentRotation = (currentRotation + 1) % 4;
         }
 
-        private List<Vector2Int> GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
+        private GridManager.FootprintCells GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
         {
-            var cells = new List<Vector2Int>();
-            var footprint = def.footprint;
-            for (int y = 0; y < footprint.height; y++)
+            if (def == null || grid == null)
             {
-                for (int x = 0; x < footprint.width; x++)
+                return new GridManager.FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
+            }
+
+            return grid.GetFootprintCells(originCell, def.footprint, rotation);
+        }
+
+        private static List<Vector2Int> CollectAllFootprintCells(GridManager.FootprintCells cells)
+        {
+            var allCells = new List<Vector2Int>();
+            if (cells.OccupiedCells != null)
+            {
+                allCells.AddRange(cells.OccupiedCells);
+            }
+
+            if (cells.DisplayCells != null)
+            {
+                for (int i = 0; i < cells.DisplayCells.Count; i++)
                 {
-                    if (!footprint.occupied[y * footprint.width + x]) continue;
-
-                    Vector2Int local = new Vector2Int(x - footprint.origin.x, y - footprint.origin.y);
-                    Vector2Int rotated = rotation switch
-                    {
-                        1 => new Vector2Int(local.y, -local.x),
-                        2 => new Vector2Int(-local.x, -local.y),
-                        3 => new Vector2Int(-local.y, local.x),
-                        _ => local
-                    };
-
-                    cells.Add(originCell + rotated);
+                    var displayCell = cells.DisplayCells[i];
+                    if (!allCells.Contains(displayCell)) allCells.Add(displayCell);
                 }
             }
-            return cells;
+
+            return allCells;
         }
 
-        private Vector3 GetFootprintCenterWorld(IReadOnlyList<Vector2Int> cells)
+        private Vector3 GetFootprintCenterWorld(GridManager.FootprintCells cells)
         {
-            if (grid == null || cells == null || cells.Count == 0) return Vector3.zero;
+            var allCells = CollectAllFootprintCells(cells);
+            if (grid == null || allCells.Count == 0) return Vector3.zero;
 
             Vector3 sum = Vector3.zero;
-            for (int i = 0; i < cells.Count; i++)
+            for (int i = 0; i < allCells.Count; i++)
             {
-                sum += grid.CellToWorld(cells[i]);
+                sum += grid.CellToWorld(allCells[i]);
             }
 
-            return sum / cells.Count;
+            return sum / allCells.Count;
         }
 
-        private bool IsFootprintValid(List<Vector2Int> cells)
+        private readonly struct FootprintValidationResult
         {
-            for (int i = 0; i < cells.Count; i++)
+            public readonly bool IsValid;
+            public readonly bool DisplayRequirementFailed;
+
+            public FootprintValidationResult(bool isValid, bool displayRequirementFailed)
             {
-                Vector2Int c = cells[i];
-                if (!grid.InBounds(c.x, c.y)) return false;
-                var cell = grid.GetCell(c);
-                if (cell.placeability == CellPlaceability.Blocked ||
-                    cell.placeability == CellPlaceability.ConnectorsOnly)
-                    return false;
-                if (cell.HasComponent) return false;
+                IsValid = isValid;
+                DisplayRequirementFailed = displayRequirementFailed;
             }
-            return true;
         }
 
-        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell, IReadOnlyList<Vector2Int> footprintCells)
+        private FootprintValidationResult ValidateFootprint(GridManager.FootprintCells cells)
+        {
+            if (grid == null) return new FootprintValidationResult(false, false);
+
+            bool hasAnyCells = (cells.OccupiedCells != null && cells.OccupiedCells.Count > 0)
+                || (cells.DisplayCells != null && cells.DisplayCells.Count > 0);
+            if (!hasAnyCells) return new FootprintValidationResult(false, false);
+
+            HashSet<Vector2Int> displayCellSet = null;
+            if (cells.DisplayCells != null && cells.DisplayCells.Count > 0)
+            {
+                displayCellSet = new HashSet<Vector2Int>(cells.DisplayCells);
+            }
+
+            if (cells.DisplayCells != null)
+            {
+                for (int i = 0; i < cells.DisplayCells.Count; i++)
+                {
+                    Vector2Int c = cells.DisplayCells[i];
+                    if (!grid.InBounds(c.x, c.y)) return new FootprintValidationResult(false, true);
+                    var cell = grid.GetCell(c);
+                    if (cell.placeability != CellPlaceability.Display) return new FootprintValidationResult(false, true);
+                    if (cell.HasComponent) return new FootprintValidationResult(false, true);
+                }
+            }
+
+            if (cells.OccupiedCells != null)
+            {
+                for (int i = 0; i < cells.OccupiedCells.Count; i++)
+                {
+                    Vector2Int c = cells.OccupiedCells[i];
+                    if (displayCellSet != null && displayCellSet.Contains(c)) continue;
+                    if (!grid.InBounds(c.x, c.y)) return new FootprintValidationResult(false, false);
+                    var cell = grid.GetCell(c);
+                    if (cell.placeability == CellPlaceability.Blocked ||
+                        cell.placeability == CellPlaceability.ConnectorsOnly ||
+                        cell.placeability == CellPlaceability.Display)
+                        return new FootprintValidationResult(false, false);
+                    if (cell.HasComponent) return new FootprintValidationResult(false, false);
+                }
+            }
+
+            return new FootprintValidationResult(true, false);
+        }
+
+        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell, GridManager.FootprintCells footprintCells)
         {
             if (currentPlacementDef == null || grid == null) return null;
 
@@ -743,27 +793,39 @@ namespace MachineRepair.Grid
             return machine;
         }
 
-        private void SetFootprintHighlights(IReadOnlyList<Vector2Int> cells, bool valid)
+        private void SetFootprintHighlights(GridManager.FootprintCells cells, FootprintValidationResult validation)
         {
-            EnsureFootprintHighlightPool(cells.Count);
-            Color color = valid ? highlightTint : new Color(1f, 0f, 0f, highlightTint.a);
-            for (int i = 0; i < cells.Count; i++)
+            var allCells = CollectAllFootprintCells(cells);
+            if (allCells.Count == 0)
+            {
+                SetFootprintHighlightsActive(false);
+                return;
+            }
+
+            EnsureFootprintHighlightPool(allCells.Count);
+            Color color = validation.IsValid
+                ? highlightTint
+                : validation.DisplayRequirementFailed
+                    ? displayRequirementTint
+                    : new Color(1f, 0f, 0f, highlightTint.a);
+
+            for (int i = 0; i < allCells.Count; i++)
             {
                 var rend = footprintHighlights[i];
                 rend.color = color;
                 rend.gameObject.SetActive(true);
-                rend.transform.position = new Vector3(cells[i].x + 0.5f, cells[i].y + 0.5f, 0f);
+                rend.transform.position = new Vector3(allCells[i].x + 0.5f, allCells[i].y + 0.5f, 0f);
             }
 
-            UpdatePlacementPreview(cells);
+            UpdatePlacementPreview(allCells, color);
 
-            for (int i = cells.Count; i < footprintHighlights.Count; i++)
+            for (int i = allCells.Count; i < footprintHighlights.Count; i++)
             {
                 footprintHighlights[i].gameObject.SetActive(false);
             }
         }
 
-        private void UpdatePlacementPreview(IReadOnlyList<Vector2Int> cells)
+        private void UpdatePlacementPreview(IReadOnlyList<Vector2Int> cells, Color tint)
         {
             if (currentPlacementDef == null || currentPlacementDef.sprite == null)
             {
@@ -774,7 +836,7 @@ namespace MachineRepair.Grid
             EnsurePlacementPreview();
 
             placementPreviewRenderer.sprite = currentPlacementDef.sprite;
-            placementPreviewRenderer.color = new Color(1f, 1f, 1f, 0.5f);
+            placementPreviewRenderer.color = new Color(tint.r, tint.g, tint.b, 0.5f);
             placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
             placementPreviewRenderer.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
             placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentRotation);
