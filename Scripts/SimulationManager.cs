@@ -47,6 +47,18 @@ namespace MachineRepair
         private readonly HashSet<PlacedWire> completedCircuitWires = new();
         private readonly List<WaterFlowArrow> waterFlowArrows = new();
 
+        private static readonly Vector2Int[] WaterPropagationOffsets =
+        {
+            new Vector2Int(1, 0),
+            new Vector2Int(-1, 0),
+            new Vector2Int(0, 1),
+            new Vector2Int(0, -1),
+            new Vector2Int(1, 1),
+            new Vector2Int(-1, 1),
+            new Vector2Int(1, -1),
+            new Vector2Int(-1, -1)
+        };
+
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
         public bool PowerOn => powerOn;
@@ -538,15 +550,9 @@ namespace MachineRepair
                 bool traversable = cell.HasPipe || IsWaterSupplyComponent(cell) || IsWaterPortCell(cellPos, waterPorts);
                 if (!traversable) continue;
 
-                for (int dir = 0; dir < 4; dir++)
+                foreach (var offset in WaterPropagationOffsets)
                 {
-                    Vector2Int neighbor = dir switch
-                    {
-                        0 => new Vector2Int(cellPos.x + 1, cellPos.y),
-                        1 => new Vector2Int(cellPos.x - 1, cellPos.y),
-                        2 => new Vector2Int(cellPos.x, cellPos.y + 1),
-                        _ => new Vector2Int(cellPos.x, cellPos.y - 1)
-                    };
+                    Vector2Int neighbor = cellPos + offset;
 
                     if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
 
@@ -731,15 +737,9 @@ namespace MachineRepair
         {
             int connections = 0;
 
-            for (int dir = 0; dir < 4; dir++)
+            foreach (var offset in WaterPropagationOffsets)
             {
-                Vector2Int neighbor = dir switch
-                {
-                    0 => new Vector2Int(cellPos.x + 1, cellPos.y),
-                    1 => new Vector2Int(cellPos.x - 1, cellPos.y),
-                    2 => new Vector2Int(cellPos.x, cellPos.y + 1),
-                    _ => new Vector2Int(cellPos.x, cellPos.y - 1)
-                };
+                Vector2Int neighbor = cellPos + offset;
 
                 if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
 
