@@ -150,16 +150,23 @@ namespace MachineRepair {
             {
                 EnsureDisplaySpriteParent();
 
+                Vector2Int? firstValidCell = null;
                 for (int i = 0; i < displayCells.Count; i++)
                 {
                     var cell = displayCells[i];
                     if (!owningGrid.InBounds(cell.x, cell.y)) continue;
 
+                    firstValidCell = cell;
+                    break;
+                }
+
+                if (firstValidCell.HasValue)
+                {
                     var renderer = EnsureDisplaySprite(activeCount, sprite, sortingLayer, sortingOrder);
-                    renderer.transform.position = owningGrid.CellToWorld(cell) + subGridOffset;
+                    renderer.transform.position = owningGrid.CellToWorld(firstValidCell.Value) + subGridOffset;
                     renderer.transform.rotation = Quaternion.identity;
                     renderer.gameObject.SetActive(true);
-                    activeCount++;
+                    activeCount = 1;
                 }
             }
 
