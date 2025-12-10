@@ -41,6 +41,7 @@ namespace MachineRepair
         private readonly List<string> faultLog = new();
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
         private readonly HashSet<PlacedWire> completedCircuitWires = new();
+        private readonly List<WaterFlowArrow> waterFlowArrows = new();
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
@@ -55,7 +56,15 @@ namespace MachineRepair
         public event Action<bool> PowerToggled;
         public event Action<bool> WaterToggled;
         public event Action<IReadOnlyList<LeakInfo>> LeaksUpdated;
+        public event Action<IReadOnlyList<WaterFlowArrow>> WaterFlowUpdated;
         public event Action<bool> SimulationRunStateChanged;
+
+        public struct WaterFlowArrow
+        {
+            public Vector3 Position;
+            public Vector2 Direction;
+            public float Speed;
+        }
 
         private void Awake()
         {
@@ -136,6 +145,8 @@ namespace MachineRepair
             waterOn = enabled;
             stepTimer = 0f;
             WaterToggled?.Invoke(waterOn);
+
+            ClearWaterFlowArrows();
         }
 
         private void BuildGraphs()
@@ -465,16 +476,19 @@ namespace MachineRepair
         private void PropagatePressureFlow()
         {
             detectedLeaks.Clear();
+            waterFlowArrows.Clear();
 
             if (grid == null || pressureGraph == null || flowGraph == null)
             {
                 NotifyLeakListeners();
+                NotifyWaterFlowListeners();
                 return;
             }
 
             if (!waterOn)
             {
                 NotifyLeakListeners();
+                NotifyWaterFlowListeners();
                 return;
             }
 
@@ -534,8 +548,22 @@ namespace MachineRepair
                     if (!acceptsWater) continue;
 
                     int nIdx = grid.ToIndex(neighbor);
-                    if (pressure > pressureGraph[nIdx]) pressureGraph[nIdx] = pressure;
-                    if (flow > flowGraph[nIdx]) flowGraph[nIdx] = flow;
+                    bool propagated = false;
+                    if (pressure > pressureGraph[nIdx])
+                    {
+                        pressureGraph[nIdx] = pressure;
+                        propagated = true;
+                    }
+                    if (flow > flowGraph[nIdx])
+                    {
+                        flowGraph[nIdx] = flow;
+                        propagated = true;
+                    }
+
+                    if (flow > 0f && propagated)
+                    {
+                        AddWaterFlowArrow(cellPos, neighbor, flow);
+                    }
 
                     if (visited.Add(nIdx))
                     {
@@ -558,6 +586,7 @@ namespace MachineRepair
             }
 
             NotifyLeakListeners();
+            NotifyWaterFlowListeners();
         }
 
         private void EvaluateSignalStates()
@@ -711,6 +740,21 @@ namespace MachineRepair
             return connections;
         }
 
+        private void AddWaterFlowArrow(Vector2Int from, Vector2Int to, float flow)
+        {
+            if (grid == null) return;
+
+            Vector2 direction = to - from;
+            if (direction == Vector2.zero) return;
+
+            waterFlowArrows.Add(new WaterFlowArrow
+            {
+                Position = grid.CellToWorld(from),
+                Direction = direction.normalized,
+                Speed = Mathf.Max(0f, flow)
+            });
+        }
+
         private bool IsWaterSupplyComponent(cellDef cell)
         {
             return cell.component != null
@@ -726,6 +770,17 @@ namespace MachineRepair
         private void NotifyLeakListeners()
         {
             LeaksUpdated?.Invoke(detectedLeaks);
+        }
+
+        private void NotifyWaterFlowListeners()
+        {
+            WaterFlowUpdated?.Invoke(waterFlowArrows);
+        }
+
+        private void ClearWaterFlowArrows()
+        {
+            waterFlowArrows.Clear();
+            NotifyWaterFlowListeners();
         }
 
         private static void EnsureGraph(ref float[] graph, int size)

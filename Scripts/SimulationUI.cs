@@ -28,7 +28,6 @@ namespace MachineRepair
         [SerializeField] private Transform pipeArrowParent;
         [SerializeField] private float arrowTravelDistance = 0.35f;
         [SerializeField] private float arrowScrollSpeed = 1.25f;
-        [SerializeField] private Vector2 pipeDirection = Vector2.right;
 
         [Header("Leaks")]
         [Tooltip("Sprite rendered where a leaking pipe cell is detected.")]
@@ -47,6 +46,8 @@ namespace MachineRepair
 
         private readonly List<SpriteRenderer> arrowPool = new();
         private readonly List<Vector3> arrowBasePositions = new();
+        private readonly List<Vector3> arrowDirections = new();
+        private readonly List<float> arrowSpeeds = new();
         private int activeArrowCount;
         private readonly Dictionary<Vector2Int, SpriteRenderer> activeLeaks = new();
         private readonly Dictionary<Vector2Int, float> leakScaleByCell = new();
@@ -99,13 +100,14 @@ namespace MachineRepair
                 simulationManager.WaterToggled += OnWaterToggled;
                 simulationManager.LeaksUpdated += OnLeaksUpdated;
                 simulationManager.SimulationRunStateChanged += OnSimulationRunStateChanged;
+                simulationManager.WaterFlowUpdated += OnWaterFlowUpdated;
                 waterActive = simulationManager.WaterOn;
                 simulationRunning = simulationManager.SimulationRunning;
             }
 
             ToggleSimulationUI(simulationRunning);
             UpdateStatus();
-            RefreshPipeArrows();
+            ClearArrowVisibility();
         }
 
         private void OnDisable()
@@ -120,6 +122,7 @@ namespace MachineRepair
                 simulationManager.WaterToggled -= OnWaterToggled;
                 simulationManager.LeaksUpdated -= OnLeaksUpdated;
                 simulationManager.SimulationRunStateChanged -= OnSimulationRunStateChanged;
+                simulationManager.WaterFlowUpdated -= OnWaterFlowUpdated;
             }
 
             ClearArrowVisibility();
@@ -182,7 +185,6 @@ namespace MachineRepair
         private void OnSimulationStepCompleted()
         {
             UpdateStatus();
-            RefreshPipeArrows();
             ShowPowerDebugInfo();
         }
 
@@ -199,7 +201,7 @@ namespace MachineRepair
             SyncLeaks(leaks);
         }
 
-        private void RefreshPipeArrows()
+        private void OnWaterFlowUpdated(IReadOnlyList<SimulationManager.WaterFlowArrow> arrows)
         {
             if (gridManager == null || pipeArrowPrefab == null)
             {
@@ -207,28 +209,24 @@ namespace MachineRepair
                 return;
             }
 
-            activeArrowCount = 0;
+            int desiredCount = arrows == null ? 0 : arrows.Count;
+            activeArrowCount = desiredCount;
 
-            for (int y = 0; y < gridManager.height; y++)
+            EnsureArrowDataListSize(desiredCount);
+
+            for (int i = 0; i < desiredCount; i++)
             {
-                for (int x = 0; x < gridManager.width; x++)
-                {
-                    var cell = gridManager.GetCell(new Vector2Int(x, y));
-                    if (!cell.HasPipe) continue;
+                var arrow = arrows[i];
+                var renderer = GetArrowRenderer(i);
+                Vector3 direction = arrow.Direction == Vector2.zero ? Vector3.right : ((Vector3)arrow.Direction).normalized;
 
-                    var renderer = GetArrowRenderer(activeArrowCount);
-                    Vector3 basePos = gridManager.CellToWorld(new Vector2Int(x, y));
+                arrowBasePositions[i] = arrow.Position;
+                arrowDirections[i] = direction;
+                arrowSpeeds[i] = Mathf.Max(0f, arrow.Speed);
 
-                    EnsureArrowBaseListSize(activeArrowCount + 1);
-                    arrowBasePositions[activeArrowCount] = basePos;
-
-                    renderer.transform.position = basePos;
-                    // Pipe direction metadata is not yet tracked; default to a configurable direction for now.
-                    renderer.transform.up = pipeDirection == Vector2.zero ? Vector2.right : pipeDirection.normalized;
-                    renderer.enabled = ShouldShowArrows();
-
-                    activeArrowCount++;
-                }
+                renderer.transform.position = arrow.Position;
+                renderer.transform.up = direction;
+                renderer.enabled = ShouldShowArrows();
             }
 
             for (int i = activeArrowCount; i < arrowPool.Count; i++)
@@ -241,15 +239,13 @@ namespace MachineRepair
         {
             if (!ShouldShowArrows() || activeArrowCount == 0) return;
 
-            Vector3 direction = (pipeDirection == Vector2.zero ? Vector2.right : pipeDirection.normalized);
-            float offset = Mathf.Repeat(Time.time * arrowScrollSpeed, arrowTravelDistance);
-
             for (int i = 0; i < activeArrowCount; i++)
             {
                 var renderer = arrowPool[i];
                 if (renderer == null || !renderer.enabled) continue;
 
-                renderer.transform.position = arrowBasePositions[i] + direction * offset;
+                float offset = Mathf.Repeat(Time.time * arrowScrollSpeed * arrowSpeeds[i], arrowTravelDistance);
+                renderer.transform.position = arrowBasePositions[i] + arrowDirections[i] * offset;
             }
         }
 
@@ -260,17 +256,27 @@ namespace MachineRepair
                 var instance = Instantiate(pipeArrowPrefab, pipeArrowParent);
                 instance.enabled = false;
                 arrowPool.Add(instance);
-                arrowBasePositions.Add(Vector3.zero);
+                EnsureArrowDataListSize(arrowPool.Count);
             }
 
             return arrowPool[index];
         }
 
-        private void EnsureArrowBaseListSize(int desiredSize)
+        private void EnsureArrowDataListSize(int desiredSize)
         {
             while (arrowBasePositions.Count < desiredSize)
             {
                 arrowBasePositions.Add(Vector3.zero);
+            }
+
+            while (arrowDirections.Count < desiredSize)
+            {
+                arrowDirections.Add(Vector3.right);
+            }
+
+            while (arrowSpeeds.Count < desiredSize)
+            {
+                arrowSpeeds.Add(0f);
             }
         }
 
