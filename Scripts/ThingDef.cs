@@ -52,8 +52,11 @@ namespace MachineRepair{
         public int height;
         public Vector2Int origin;
         public bool[] occupied;
+        public bool[] display;
 
-        public bool Occupies(Vector2Int p) => occupied[p.y * width + p.x];
+        public int IndexOf(Vector2Int p) => p.y * width + p.x;
+        public bool Occupies(Vector2Int p) => occupied[IndexOf(p)];
+        public bool Displays(Vector2Int p) => display[IndexOf(p)];
     }
 }
 

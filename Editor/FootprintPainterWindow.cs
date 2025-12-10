@@ -16,11 +16,12 @@ namespace MachineRepair.EditorTools
         private Vector2 scroll;
         private float cellPx = 22f;         // pixel size of a cell in the painter
         private float gridPadding = 8f;
-        private enum ToolMode { Paint, Erase, Origin }
+        private enum ToolMode { Paint, Erase, DisplayPaint, DisplayErase, Origin }
         private ToolMode mode = ToolMode.Paint;
 
         private bool dragActive = false;
-        private bool dragPaintState = true;  // paint or erase during drag
+        private bool dragState = true;  // paint or erase during drag
+        private bool dragAffectsDisplay = false;
 
         [MenuItem("Tools/Espresso/Footprint Painter")]
         public static void Open()
@@ -45,12 +46,16 @@ namespace MachineRepair.EditorTools
                 // Ensure array initialized
                 int w = Mathf.Max(1, def.footprint.width);
                 int h = Mathf.Max(1, def.footprint.height);
-                if (def.footprint.occupied == null || def.footprint.occupied.Length != w * h)
+                bool needsSizeFix = def.footprint.width != w || def.footprint.height != h;
+                bool needsOccupied = def.footprint.occupied == null || def.footprint.occupied.Length != w * h;
+                bool needsDisplay = def.footprint.display == null || def.footprint.display.Length != w * h;
+                if (needsSizeFix || needsOccupied || needsDisplay)
                 {
                     Undo.RecordObject(def, "Init Footprint");
                     def.footprint.width = w;
                     def.footprint.height = h;
-                    def.footprint.occupied = new bool[w * h];
+                    if (needsOccupied) def.footprint.occupied = new bool[w * h];
+                    if (needsDisplay) def.footprint.display = new bool[w * h];
                     EditorUtility.SetDirty(def);
                 }
 
@@ -78,6 +83,12 @@ namespace MachineRepair.EditorTools
                     // Fill
                     Color fill = def.footprint.occupied[idx] ? new Color(0.25f, 0.65f, 0.35f, 1f) : new Color(0.10f, 0.10f, 0.10f, 1f);
                     EditorGUI.DrawRect(cRect, fill);
+
+                    if (def.footprint.display != null && def.footprint.display[idx])
+                    {
+                        var displayColor = new Color(0.30f, 0.55f, 0.95f, 0.35f);
+                        EditorGUI.DrawRect(cRect, displayColor);
+                    }
 
                     // Origin marker
                     if (def.footprint.origin.x == x && def.footprint.origin.y == y)
@@ -107,7 +118,7 @@ namespace MachineRepair.EditorTools
 
                 // Save tip
                 EditorGUILayout.Space(4);
-                EditorGUILayout.HelpBox("Tip: Origin (yellow) is the pivot used for placement & rotation. 0,0 is bottom-left.", MessageType.None);
+                EditorGUILayout.HelpBox("Tip: Origin (yellow) is the pivot used for placement & rotation. Display cells (blue overlay) mark front-panel-visible tiles. 0,0 is bottom-left.", MessageType.None);
             }
         }
 
@@ -133,7 +144,7 @@ namespace MachineRepair.EditorTools
                 GUILayout.FlexibleSpace();
 
                 // Tool mode
-                mode = (ToolMode)EditorGUILayout.EnumPopup(mode, GUILayout.Width(80));
+                mode = (ToolMode)EditorGUILayout.EnumPopup(mode, GUILayout.Width(110));
 
                 // Cell size (zoom)
                 EditorGUILayout.LabelField("Zoom", GUILayout.Width(40));
@@ -166,19 +177,25 @@ namespace MachineRepair.EditorTools
         {
             Undo.RecordObject(def, "Resize Footprint");
             bool[] old = def.footprint.occupied ?? new bool[0];
+            bool[] oldDisplay = def.footprint.display ?? new bool[0];
             int oldW = def.footprint.width;
             int oldH = def.footprint.height;
 
             var next = new bool[newW * newH];
+            var nextDisplay = new bool[newW * newH];
             for (int y = 0; y < Mathf.Min(oldH, newH); y++)
             for (int x = 0; x < Mathf.Min(oldW, newW); x++)
             {
-                next[y * newW + x] = old[y * oldW + x];
+                int oldIdx = y * oldW + x;
+                int newIdx = y * newW + x;
+                next[newIdx] = oldIdx < old.Length && old[oldIdx];
+                nextDisplay[newIdx] = oldIdx < oldDisplay.Length && oldDisplay[oldIdx];
             }
 
             def.footprint.width = newW;
             def.footprint.height = newH;
             def.footprint.occupied = next;
+            def.footprint.display = nextDisplay;
 
             // Clamp origin
             def.footprint.origin.x = Mathf.Clamp(def.footprint.origin.x, 0, newW - 1);
@@ -205,9 +222,14 @@ namespace MachineRepair.EditorTools
                 }
                 else
                 {
-                    bool state = (mode == ToolMode.Paint);
-                    dragPaintState = state;
-                    PaintCell(idx, state);
+                    bool state = (mode == ToolMode.Paint || mode == ToolMode.DisplayPaint);
+                    dragState = state;
+                    dragAffectsDisplay = (mode == ToolMode.DisplayPaint || mode == ToolMode.DisplayErase);
+
+                    if (dragAffectsDisplay)
+                        PaintDisplayCell(idx, state);
+                    else
+                        PaintCell(idx, state);
                 }
             }
             else if (e.type == EventType.MouseDrag && dragActive)
@@ -221,7 +243,10 @@ namespace MachineRepair.EditorTools
                     }
                     else
                     {
-                        PaintCell(idx, dragPaintState);
+                        if (dragAffectsDisplay)
+                            PaintDisplayCell(idx, dragState);
+                        else
+                            PaintCell(idx, dragState);
                     }
                 }
                 e.Use();
@@ -229,6 +254,7 @@ namespace MachineRepair.EditorTools
             else if (e.type == EventType.MouseUp)
             {
                 dragActive = false;
+                dragAffectsDisplay = false;
             }
         }
 
@@ -247,6 +273,14 @@ namespace MachineRepair.EditorTools
         {
             Undo.RecordObject(def, "Paint Footprint");
             def.footprint.occupied[idx] = state;
+            EditorUtility.SetDirty(def);
+            Repaint();
+        }
+
+        void PaintDisplayCell(int idx, bool state)
+        {
+            Undo.RecordObject(def, "Paint Display Footprint");
+            def.footprint.display[idx] = state;
             EditorUtility.SetDirty(def);
             Repaint();
         }
