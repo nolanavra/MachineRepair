@@ -356,17 +356,28 @@ namespace MachineRepair
 
         private List<Vector2Int> FindPath(Vector2Int start, Vector2Int goal)
         {
-            var shortest = FindPathInternal(start, goal, avoidExistingRuns: false);
+            // First pass forbids stepping through components to prefer clean tiles. If that fails,
+            // fall back to a secondary search that allows component cells while still respecting
+            // blocked tiles and existing run avoidance rules.
+            var pathWithoutComponents = FindPathWithRunPreference(start, goal, allowComponents: false);
+            if (pathWithoutComponents.Count > 0) return pathWithoutComponents;
+
+            return FindPathWithRunPreference(start, goal, allowComponents: true);
+        }
+
+        private List<Vector2Int> FindPathWithRunPreference(Vector2Int start, Vector2Int goal, bool allowComponents)
+        {
+            var shortest = FindPathInternal(start, goal, allowComponents, avoidExistingRuns: false);
             if (shortest.Count == 0) return shortest;
 
-            var avoidRuns = FindPathInternal(start, goal, avoidExistingRuns: true);
+            var avoidRuns = FindPathInternal(start, goal, allowComponents, avoidExistingRuns: true);
             if (avoidRuns.Count == 0) return shortest;
 
             float threshold = shortest.Count * 1.5f;
             return avoidRuns.Count <= threshold ? avoidRuns : shortest;
         }
 
-        private List<Vector2Int> FindPathInternal(Vector2Int start, Vector2Int goal, bool avoidExistingRuns)
+        private List<Vector2Int> FindPathInternal(Vector2Int start, Vector2Int goal, bool allowComponents, bool avoidExistingRuns)
         {
             var result = new List<Vector2Int>();
             if (drawPathingDebug) debugCandidates.Clear();
@@ -410,7 +421,7 @@ namespace MachineRepair
                         continue;
                     }
 
-                    TryEnqueueNeighbor(start, goal, avoidExistingRuns, cameFrom, frontier, visited, current, candidate);
+                    TryEnqueueNeighbor(start, goal, allowComponents, avoidExistingRuns, cameFrom, frontier, visited, current, candidate);
                 }
             }
 
@@ -460,6 +471,7 @@ namespace MachineRepair
         private void TryEnqueueNeighbor(
             Vector2Int start,
             Vector2Int goal,
+            bool allowComponents,
             bool avoidExistingRuns,
             Dictionary<PathState, PathState> cameFrom,
             Queue<PathState> frontier,
@@ -477,7 +489,7 @@ namespace MachineRepair
                 return;
             }
 
-            if (!IsCellPassable(start, goal, avoidExistingRuns, candidate, nextCell, out var reason))
+            if (!IsCellPassable(start, goal, allowComponents, avoidExistingRuns, candidate, nextCell, out var reason))
             {
                 RecordDebugCandidate(current.Position, candidate, false, reason);
                 return;
@@ -495,6 +507,7 @@ namespace MachineRepair
         private bool IsCellPassable(
             Vector2Int start,
             Vector2Int goal,
+            bool allowComponents,
             bool avoidExistingRuns,
             Vector2Int candidate,
             cellDef candidateCell,
@@ -503,7 +516,7 @@ namespace MachineRepair
             reason = string.Empty;
 
             bool isGoal = candidate == goal;
-            bool blockedByComponent = candidateCell.HasComponent && !isGoal && candidate != start;
+            bool blockedByComponent = !allowComponents && candidateCell.HasComponent && !isGoal && candidate != start;
             bool blockedByPlaceability = candidateCell.placeability == CellPlaceability.Blocked;
             if (blockedByComponent || blockedByPlaceability)
             {
