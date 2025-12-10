@@ -40,6 +40,7 @@ namespace MachineRepair{
         [Header("Sprites")]
         public Sprite icon;   // shown in Inventory UI + Inspect panel
         public Sprite sprite;      // shown when placed on grid (ComponentInstance)
+        public Sprite displaySprite; // shown on subgrid display cells
         [Header("Visual Tweaks for placed sprite")]
         public float placedSpriteScale = 1f;
         public int placedSortingOrder = 200;
