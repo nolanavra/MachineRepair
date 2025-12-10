@@ -817,7 +817,7 @@ namespace MachineRepair.Grid
                 rend.transform.position = new Vector3(allCells[i].x + 0.5f, allCells[i].y + 0.5f, 0f);
             }
 
-            UpdatePlacementPreview(allCells, color);
+            UpdatePlacementPreview(cells, color);
 
             for (int i = allCells.Count; i < footprintHighlights.Count; i++)
             {
@@ -825,7 +825,7 @@ namespace MachineRepair.Grid
             }
         }
 
-        private void UpdatePlacementPreview(IReadOnlyList<Vector2Int> cells, Color tint)
+        private void UpdatePlacementPreview(GridManager.FootprintCells cells, Color tint)
         {
             if (currentPlacementDef == null || currentPlacementDef.sprite == null)
             {
