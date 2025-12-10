@@ -1,3 +1,4 @@
+using MachineRepair;
 using MachineRepair.Grid;
 using TMPro;
 using UnityEngine;
@@ -13,6 +14,9 @@ namespace MachineRepair.Grid {
         [SerializeField] private TextMeshProUGUI cellText;
         [SerializeField] private TextMeshProUGUI cellOccupancy;
         [SerializeField] private TextMeshProUGUI gameMode;
+        [Header("Simulation")]
+        [SerializeField] private SimulationManager simulationManager;
+        [SerializeField] private TextMeshProUGUI waterConditions;
 
         private void OnEnable()
         {
@@ -32,6 +36,11 @@ namespace MachineRepair.Grid {
 
             // Updated method  no warnings
             grid = Object.FindFirstObjectByType<GridManager>();
+
+            if (simulationManager == null)
+            {
+                simulationManager = Object.FindFirstObjectByType<SimulationManager>();
+            }
         }
 
         void Update()
@@ -48,12 +57,15 @@ namespace MachineRepair.Grid {
                 cellText.text = $"({location.x}, {location.y})  | i={index} Placeability: {cell.placeability}";
                 cellOccupancy.text = $"Contents// Comp:{cell.HasComponent} Wire: {cell.HasWire} Pipe: {cell.HasPipe} ";
 
-                
+                UpdateWaterDebug(index);
+
+
             }
             else
             {
                 cellText.text = $"(out of bounds)";
                 cellOccupancy.text = $"---";
+                if (waterConditions != null) waterConditions.text = "Water: ---";
             }
             
         }
@@ -70,6 +82,33 @@ namespace MachineRepair.Grid {
             // Optional: cleanup when leaving a mode (e.g., cancel wire run)
             // Example:
             // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
+        }
+
+        private void UpdateWaterDebug(int cellIndex)
+        {
+            if (waterConditions == null)
+            {
+                return;
+            }
+
+            if (simulationManager == null || !simulationManager.LastSnapshot.HasValue)
+            {
+                waterConditions.text = "Water: snapshot unavailable";
+                return;
+            }
+
+            var snapshot = simulationManager.LastSnapshot.Value;
+            float pressure = (snapshot.Pressure != null && cellIndex >= 0 && cellIndex < snapshot.Pressure.Length)
+                ? snapshot.Pressure[cellIndex]
+                : 0f;
+            float flow = (snapshot.Flow != null && cellIndex >= 0 && cellIndex < snapshot.Flow.Length)
+                ? snapshot.Flow[cellIndex]
+                : 0f;
+
+            string state = simulationManager.WaterOn ? "ON" : "OFF";
+            string runState = simulationManager.SimulationRunning ? "Running" : "Paused";
+
+            waterConditions.text = $"Water: {state} ({runState})\nPressure: {pressure:0.###} | Flow: {flow:0.###}";
         }
     }
 }

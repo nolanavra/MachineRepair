@@ -43,6 +43,7 @@ namespace MachineRepair
         [Header("Debugging")]
         [SerializeField] private bool logPoweredPaths = false;
         [SerializeField] private TextMeshProUGUI powerDebugLabel;
+        [SerializeField] private bool logWaterArrows = false;
 
         private readonly List<SpriteRenderer> arrowPool = new();
         private readonly List<Vector3> arrowBasePositions = new();
@@ -227,6 +228,11 @@ namespace MachineRepair
                 renderer.transform.position = arrow.Position;
                 renderer.transform.up = direction;
                 renderer.enabled = ShouldShowArrows();
+
+                if (logWaterArrows)
+                {
+                    Debug.Log($"[SimulationUI] Arrow[{i}] pos={arrow.Position} dir={direction} speed={arrowSpeeds[i]:0.###} enabled={renderer.enabled}");
+                }
             }
 
             for (int i = activeArrowCount; i < arrowPool.Count; i++)
