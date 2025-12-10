@@ -17,6 +17,11 @@ namespace MachineRepair.Flavor
         public RectTransform bubbleParent;
         [Min(1f)] public float bubbleLifetime = 6f;
 
+        [Header("Portrait Spawn")]
+        [Tooltip("Prefab with a SpriteRenderer used to show the speaking customer's portrait in world space.")]
+        [SerializeField] private SpriteRenderer portraitPrefab;
+        [SerializeField] private Vector2 portraitOffsetFromSubGrid = new Vector2(0.5f, 0.5f);
+
         [Header("Customer Visuals")]
         public List<CustomerPortraitProfile> portraitProfiles = new();
         public CameraGridFocusController cameraFocusController;
@@ -234,8 +239,10 @@ namespace MachineRepair.Flavor
             }
 
             ui.SetText(text);
-            ui.SetPortrait(portrait);
+            ui.SetPortrait(null); // portrait now lives in world space
             ui.Play(bubbleLifetime);
+
+            SpawnWorldPortrait(portrait, bubbleLifetime);
         }
 
         Sprite PickCustomerSprite(FlavorLine chosenLine)
@@ -368,6 +375,38 @@ namespace MachineRepair.Flavor
                 Debug.Log($"[FlavorChatService] Bubble parent: {br.name} under {parentName}.");
             }
             return _resolvedParent;
+        }
+
+        void SpawnWorldPortrait(Sprite portrait, float lifetimeSeconds)
+        {
+            if (portrait == null)
+                return;
+
+            if (portraitPrefab == null)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] portraitPrefab is null; skipping portrait spawn.");
+                return;
+            }
+
+            if (cameraFocusController == null || cameraFocusController.SubGridCenter == null)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] Missing cameraFocusController or sub grid center; skipping portrait spawn.");
+                return;
+            }
+
+            var anchor = cameraFocusController.SubGridCenter.position;
+            var worldPos = anchor + new Vector3(portraitOffsetFromSubGrid.x, portraitOffsetFromSubGrid.y, 0f);
+            var instance = Instantiate(portraitPrefab, worldPos, Quaternion.identity);
+            instance.sprite = portrait;
+
+            StartCoroutine(DestroyPortraitAfter(instance.gameObject, Mathf.Max(0f, lifetimeSeconds)));
+        }
+
+        IEnumerator DestroyPortraitAfter(GameObject go, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (go != null)
+                Destroy(go);
         }
     }
 }
