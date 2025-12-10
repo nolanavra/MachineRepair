@@ -865,6 +865,7 @@ namespace MachineRepair
                     if (cell.component.def.type != ComponentType.ChassisPowerConnection) continue;
 
                     grid.SetPower(new Vector2Int(x, y), powerEnabled);
+                    cell.component.SetPowered(powerEnabled);
                 }
             }
         }

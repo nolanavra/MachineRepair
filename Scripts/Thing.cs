@@ -31,6 +31,9 @@ namespace MachineRepair {
         [SerializeField] private Transform displaySpriteParent;
         [SerializeField] private List<SpriteRenderer> displaySprites = new();
 
+        [Header("Simulation State")]
+        [SerializeField] private bool isPowered;
+
         [Header("Connections")]
         [SerializeField] private List<MachineComponent> powerConnections = new();
         [SerializeField] private List<MachineComponent> waterConnections = new();
@@ -39,6 +42,8 @@ namespace MachineRepair {
         public IReadOnlyList<MachineComponent> PowerConnections => powerConnections;
         public IReadOnlyList<MachineComponent> WaterConnections => waterConnections;
         public IReadOnlyList<MachineComponent> SignalConnections => signalConnections;
+
+        public bool IsPowered => isPowered;
 
         public Vector2Int GetGlobalCell(Vector2Int localCell)
         {
@@ -49,6 +54,11 @@ namespace MachineRepair {
         {
             Vector2Int footprintOrigin = footprint.origin;
             return port.ToGlobalCell(anchorCell, rotation, footprintOrigin);
+        }
+
+        public void SetPowered(bool powered)
+        {
+            isPowered = powered;
         }
 
         public void RegisterConnection(PortType portType, MachineComponent other)
