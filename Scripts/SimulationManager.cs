@@ -26,6 +26,9 @@ namespace MachineRepair
         [SerializeField] private bool waterOn = true;
         [Tooltip("Whether the simulation loop is currently advancing.")]
         [SerializeField] private bool simulationRunning;
+        [Header("Debugging")]
+        [Tooltip("Log water flow arrow instantiation for debugging hydraulic paths.")]
+        [SerializeField] private bool logWaterFlowPaths = false;
 
         private float stepTimer;
 
@@ -747,12 +750,19 @@ namespace MachineRepair
             Vector2 direction = to - from;
             if (direction == Vector2.zero) return;
 
-            waterFlowArrows.Add(new WaterFlowArrow
+            var arrow = new WaterFlowArrow
             {
                 Position = grid.CellToWorld(from),
                 Direction = direction.normalized,
                 Speed = Mathf.Max(0f, flow)
-            });
+            };
+
+            waterFlowArrows.Add(arrow);
+
+            if (logWaterFlowPaths)
+            {
+                Debug.Log($"[SimulationManager] Added water arrow from {from} toward {to} dir={arrow.Direction} speed={arrow.Speed:0.###}");
+            }
         }
 
         private bool IsWaterSupplyComponent(cellDef cell)
