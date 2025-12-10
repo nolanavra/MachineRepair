@@ -17,6 +17,11 @@ public class CameraGridFocusController : MonoBehaviour
     [SerializeField] private float maxOrthographicSize = 12f;
     [SerializeField] private float scrollZoomStep = 0.1f;
 
+    [Header("Pan")]
+    [SerializeField] private PanBounds mainGridPanBounds = new(-5f, 5f, -3f, 3f);
+    [SerializeField] private PanBounds subGridPanBounds = new(-3f, 3f, -2f, 2f);
+    [SerializeField] private float panReturnSpeed = 10f;
+
     [Header("Input")]
     [SerializeField] private Key toggleFocusKey = Key.Tab;
     [SerializeField] private Button toggleFocusButton;
@@ -42,6 +47,9 @@ public class CameraGridFocusController : MonoBehaviour
     public Transform SubGridCenter => subGridCenter;
 
     private readonly Dictionary<GameObject, bool> defaultPanelVisibility = new();
+    private bool isDragging;
+    private Vector3 dragStartWorldPosition;
+    private Vector3 cameraStartPosition;
 
     private void Awake()
     {
@@ -84,6 +92,8 @@ public class CameraGridFocusController : MonoBehaviour
     {
         HandleHotkey();
         HandleScrollZoom();
+        HandleMiddleMouseDrag();
+        ApplyPanBoundsWhenReleased();
     }
 
     public void FocusMainGrid()
@@ -174,6 +184,124 @@ public class CameraGridFocusController : MonoBehaviour
         }
 
         targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize, minOrthographicSize, maxOrthographicSize);
+    }
+
+    private void HandleMiddleMouseDrag()
+    {
+        if (targetCamera == null || Mouse.current == null)
+        {
+            return;
+        }
+
+        Mouse mouse = Mouse.current;
+
+        if (mouse.middleButton.wasPressedThisFrame)
+        {
+            BeginDrag();
+        }
+        else if (mouse.middleButton.isPressed && isDragging)
+        {
+            UpdateDrag();
+        }
+        else if (mouse.middleButton.wasReleasedThisFrame)
+        {
+            EndDrag();
+        }
+    }
+
+    private void BeginDrag()
+    {
+        if (targetCamera == null || Mouse.current == null)
+        {
+            return;
+        }
+
+        isDragging = true;
+        dragStartWorldPosition = ScreenToWorld(Mouse.current.position.ReadValue());
+        cameraStartPosition = targetCamera.transform.position;
+    }
+
+    private void UpdateDrag()
+    {
+        if (targetCamera == null || Mouse.current == null)
+        {
+            return;
+        }
+
+        Vector3 currentWorld = ScreenToWorld(Mouse.current.position.ReadValue());
+        Vector3 delta = dragStartWorldPosition - currentWorld;
+
+        Vector3 desiredPosition = cameraStartPosition + delta;
+        targetCamera.transform.position = new(desiredPosition.x, desiredPosition.y, targetCamera.transform.position.z);
+    }
+
+    private void EndDrag()
+    {
+        isDragging = false;
+    }
+
+    private void ApplyPanBoundsWhenReleased()
+    {
+        if (isDragging || targetCamera == null)
+        {
+            return;
+        }
+
+        if (!TryGetActiveCenter(out Transform activeCenter))
+        {
+            return;
+        }
+
+        PanBounds bounds = IsSubGridActive ? subGridPanBounds : mainGridPanBounds;
+        Vector3 cameraPosition = targetCamera.transform.position;
+        Vector3 clampedPosition = bounds.ClampPositionAroundCenter(cameraPosition, activeCenter.position);
+
+        if (cameraPosition != clampedPosition)
+        {
+            Vector3 newPosition = Vector3.MoveTowards(cameraPosition, clampedPosition, panReturnSpeed * Time.deltaTime);
+            targetCamera.transform.position = newPosition;
+        }
+    }
+
+    private bool TryGetActiveCenter(out Transform activeCenter)
+    {
+        activeCenter = IsSubGridActive ? subGridCenter : mainGridCenter;
+        return activeCenter != null;
+    }
+
+    private Vector3 ScreenToWorld(Vector2 screenPosition)
+    {
+        if (targetCamera == null)
+        {
+            return Vector3.zero;
+        }
+
+        Vector3 position = new(screenPosition.x, screenPosition.y, Mathf.Abs(targetCamera.transform.position.z));
+        return targetCamera.ScreenToWorldPoint(position);
+    }
+
+    [System.Serializable]
+    private struct PanBounds
+    {
+        public float MinX;
+        public float MaxX;
+        public float MinY;
+        public float MaxY;
+
+        public PanBounds(float minX, float maxX, float minY, float maxY)
+        {
+            MinX = minX;
+            MaxX = maxX;
+            MinY = minY;
+            MaxY = maxY;
+        }
+
+        public Vector3 ClampPositionAroundCenter(Vector3 position, Vector3 center)
+        {
+            float clampedX = Mathf.Clamp(position.x, center.x + MinX, center.x + MaxX);
+            float clampedY = Mathf.Clamp(position.y, center.y + MinY, center.y + MaxY);
+            return new(clampedX, clampedY, position.z);
+        }
     }
 
     private void UpdateFocusIndicator()
