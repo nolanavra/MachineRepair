@@ -10,13 +10,13 @@ namespace MachineRepair
     /// and signal passes in a predictable order so components and connectors remain
     /// stable between steps.
     /// </summary>
-    public class SimulationManager : MonoBehaviour, IGameModeListener
+    public class SimulationManager : MonoBehaviour
     {
         [Header("References")]
         [SerializeField] private GridManager grid;
 
         [Header("Execution")]
-        [Tooltip("Automatically run simulation steps while Simulation mode is active.")]
+        [Tooltip("Automatically run simulation steps while simulation is running.")]
         [SerializeField] private bool autorun = true;
         [Tooltip("Seconds between autorun steps.")]
         [SerializeField] private float stepInterval = 0.1f;
@@ -24,6 +24,8 @@ namespace MachineRepair
         [SerializeField] private bool powerOn = true;
         [Tooltip("Toggle hydraulic propagation on/off.")]
         [SerializeField] private bool waterOn = true;
+        [Tooltip("Whether the simulation loop is currently advancing.")]
+        [SerializeField] private bool simulationRunning;
 
         private float stepTimer;
 
@@ -44,6 +46,7 @@ namespace MachineRepair
 
         public bool PowerOn => powerOn;
         public bool WaterOn => waterOn;
+        public bool SimulationRunning => simulationRunning;
 
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
@@ -52,32 +55,21 @@ namespace MachineRepair
         public event Action<bool> PowerToggled;
         public event Action<bool> WaterToggled;
         public event Action<IReadOnlyList<LeakInfo>> LeaksUpdated;
+        public event Action<bool> SimulationRunStateChanged;
 
         private void Awake()
         {
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
         }
 
-        private void OnEnable()
-        {
-            if (GameModeManager.Instance != null)
-            {
-                GameModeManager.Instance.RegisterListener(this);
-            }
-        }
-
-        private void OnDisable()
-        {
-            if (GameModeManager.Instance != null)
-            {
-                GameModeManager.Instance.UnregisterListener(this);
-            }
-        }
-
         private void Update()
         {
             if (!autorun) return;
-            if (GameModeManager.Instance != null && GameModeManager.Instance.CurrentMode != GameMode.Simulation) return;
+            if (!simulationRunning)
+            {
+                stepTimer = 0f;
+                return;
+            }
             if (grid == null) return;
 
             bool anyEnabled = powerOn || waterOn;
@@ -111,21 +103,20 @@ namespace MachineRepair
             EmitSimulationSnapshot();
         }
 
-        public void OnEnterMode(GameMode newMode)
+        public void SetSimulationRunning(bool shouldRun)
         {
-            if (newMode != GameMode.Simulation)
-            {
-                stepTimer = 0f;
-            }
+            if (simulationRunning == shouldRun) return;
+
+            simulationRunning = shouldRun;
+            stepTimer = 0f;
+            SimulationRunStateChanged?.Invoke(simulationRunning);
         }
 
-        public void OnExitMode(GameMode oldMode)
-        {
-            if (oldMode == GameMode.Simulation)
-            {
-                stepTimer = 0f;
-            }
-        }
+        public void StartSimulation() => SetSimulationRunning(true);
+
+        public void StopSimulation() => SetSimulationRunning(false);
+
+        public void ToggleSimulationRunning() => SetSimulationRunning(!simulationRunning);
 
         public void SetPower(bool enabled)
         {
