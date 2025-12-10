@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem; // New Input System
+using MachineRepair;
 
 public enum GameMode
 {
@@ -38,6 +39,7 @@ public class GameModeManager : MonoBehaviour
     [SerializeField] private string pipePlacementActionName = "ModePipePlacement";
     [SerializeField] private string selectionActionName = "ModeSelection";
     [SerializeField] private string simulationActionName = "ModeSimulation";
+    [SerializeField] private SimulationManager simulationManager;
 
     public GameMode CurrentMode { get; private set; }
 
@@ -58,6 +60,11 @@ public class GameModeManager : MonoBehaviour
             return;
         }
         Instance = this;
+
+        if (simulationManager == null)
+        {
+            simulationManager = FindFirstObjectByType<SimulationManager>();
+        }
     }
 
     private void OnEnable()
@@ -123,10 +130,18 @@ public class GameModeManager : MonoBehaviour
 
     public void ToggleSimulation()
     {
-        if (CurrentMode == GameMode.Simulation)
-            SetMode(GameMode.Selection);
-        else
-            SetMode(GameMode.Simulation);
+        if (simulationManager == null)
+        {
+            simulationManager = FindFirstObjectByType<SimulationManager>();
+        }
+
+        if (simulationManager == null)
+        {
+            Debug.LogWarning("[GameModeManager] No SimulationManager assigned; cannot toggle simulation.");
+            return;
+        }
+
+        simulationManager.ToggleSimulationRunning();
     }
 
     public static bool Is(GameMode mode) =>
@@ -259,6 +274,6 @@ public class GameModeManager : MonoBehaviour
     private void OnSimulationPerformed(InputAction.CallbackContext ctx)
     {
         if (!ctx.performed) return;
-        SetMode(GameMode.Simulation);
+        ToggleSimulation();
     }
 }

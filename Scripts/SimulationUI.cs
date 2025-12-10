@@ -11,12 +11,10 @@ namespace MachineRepair
     /// Binds buttons to SimulationManager toggles and mirrors their current state.
     /// </summary>
     public class SimulationUI : MonoBehaviour
-        , IGameModeListener
     {
         [Header("References")]
         [SerializeField] private SimulationManager simulationManager;
         [SerializeField] private GridManager gridManager;
-        [SerializeField] private GameModeManager gameModeManager;
         [Tooltip("Root panel GameObject that contains all Simulation UI controls.")]
         [SerializeField] private GameObject simulationPanel;
         [SerializeField] private Button startPowerButton;
@@ -54,7 +52,7 @@ namespace MachineRepair
         private readonly Dictionary<Vector2Int, float> leakScaleByCell = new();
         private readonly Stack<SpriteRenderer> leakPool = new();
         private bool waterActive;
-        private bool isSimulationMode;
+        private bool simulationRunning;
         private CanvasGroup simulationCanvasGroup;
 
         private void Awake()
@@ -67,11 +65,6 @@ namespace MachineRepair
             if (gridManager == null)
             {
                 gridManager = FindFirstObjectByType<GridManager>();
-            }
-
-            if (gameModeManager == null)
-            {
-                gameModeManager = GameModeManager.Instance;
             }
 
             if (simulationPanel == null)
@@ -105,16 +98,12 @@ namespace MachineRepair
                 simulationManager.PowerToggled += OnPowerToggled;
                 simulationManager.WaterToggled += OnWaterToggled;
                 simulationManager.LeaksUpdated += OnLeaksUpdated;
+                simulationManager.SimulationRunStateChanged += OnSimulationRunStateChanged;
                 waterActive = simulationManager.WaterOn;
+                simulationRunning = simulationManager.SimulationRunning;
             }
 
-            if (gameModeManager != null)
-            {
-                gameModeManager.RegisterListener(this);
-                isSimulationMode = gameModeManager.CurrentMode == GameMode.Simulation;
-            }
-
-            ToggleSimulationUI(isSimulationMode);
+            ToggleSimulationUI(simulationRunning);
             UpdateStatus();
             RefreshPipeArrows();
         }
@@ -130,11 +119,7 @@ namespace MachineRepair
                 simulationManager.PowerToggled -= OnPowerToggled;
                 simulationManager.WaterToggled -= OnWaterToggled;
                 simulationManager.LeaksUpdated -= OnLeaksUpdated;
-            }
-
-            if (gameModeManager != null)
-            {
-                gameModeManager.UnregisterListener(this);
+                simulationManager.SimulationRunStateChanged -= OnSimulationRunStateChanged;
             }
 
             ClearArrowVisibility();
@@ -194,30 +179,19 @@ namespace MachineRepair
             AnimateLeaks();
         }
 
-        public void OnEnterMode(GameMode newMode)
-        {
-            isSimulationMode = newMode == GameMode.Simulation;
-            ToggleSimulationUI(isSimulationMode);
-            UpdateArrowVisibility();
-            UpdateLeakVisibility();
-        }
-
-        public void OnExitMode(GameMode oldMode)
-        {
-            if (oldMode == GameMode.Simulation)
-            {
-                isSimulationMode = false;
-                ToggleSimulationUI(false);
-                UpdateArrowVisibility();
-                UpdateLeakVisibility();
-            }
-        }
-
         private void OnSimulationStepCompleted()
         {
             UpdateStatus();
             RefreshPipeArrows();
             ShowPowerDebugInfo();
+        }
+
+        private void OnSimulationRunStateChanged(bool running)
+        {
+            simulationRunning = running;
+            ToggleSimulationUI(simulationRunning);
+            UpdateArrowVisibility();
+            UpdateLeakVisibility();
         }
 
         private void OnLeaksUpdated(IReadOnlyList<SimulationManager.LeakInfo> leaks)
@@ -324,7 +298,7 @@ namespace MachineRepair
             activeArrowCount = 0;
         }
 
-        private bool ShouldShowArrows() => waterActive && isSimulationMode;
+        private bool ShouldShowArrows() => waterActive && simulationRunning;
 
         private void ToggleSimulationUI(bool visible)
         {
@@ -522,6 +496,6 @@ namespace MachineRepair
             Debug.Log(debugText);
         }
 
-        private bool ShouldShowLeaks() => waterActive && isSimulationMode;
+        private bool ShouldShowLeaks() => waterActive && simulationRunning;
     }
 }
