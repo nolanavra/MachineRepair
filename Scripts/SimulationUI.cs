@@ -26,7 +26,9 @@ namespace MachineRepair
         [Tooltip("Arrow sprite used to visualize water flow across pipes.")]
         [SerializeField] private SpriteRenderer pipeArrowPrefab;
         [SerializeField] private Transform pipeArrowParent;
-        [SerializeField] private float arrowTravelDistance = 3f;
+        [Tooltip("How many grid cells worth of distance an arrow travels before looping back.")]
+        [Min(1f)]
+        [SerializeField] private float arrowTravelCells = 2f;
         [SerializeField] private float arrowScrollSpeed = 1.25f;
 
         [Header("Leaks")]
@@ -50,6 +52,8 @@ namespace MachineRepair
         private readonly List<Vector3> arrowDirections = new();
         private readonly List<float> arrowSpeeds = new();
         private int activeArrowCount;
+        private float arrowSegmentLength = 1f;
+        private float arrowTravelDistance = 2f;
         private readonly Dictionary<Vector2Int, SpriteRenderer> activeLeaks = new();
         private readonly Dictionary<Vector2Int, float> leakScaleByCell = new();
         private readonly Stack<SpriteRenderer> leakPool = new();
@@ -68,6 +72,8 @@ namespace MachineRepair
             {
                 gridManager = FindFirstObjectByType<GridManager>();
             }
+
+            RecalculateArrowTravelDistance();
 
             if (simulationPanel == null)
             {
@@ -209,6 +215,8 @@ namespace MachineRepair
                 ClearArrowVisibility();
                 return;
             }
+
+            RecalculateArrowTravelDistance();
 
             int desiredCount = arrows == null ? 0 : arrows.Count;
             activeArrowCount = desiredCount;
@@ -509,5 +517,28 @@ namespace MachineRepair
         }
 
         private bool ShouldShowLeaks() => waterActive && simulationRunning;
+
+        private void RecalculateArrowTravelDistance()
+        {
+            arrowSegmentLength = Mathf.Max(0.001f, CalculateSegmentLength());
+            float clampedCells = Mathf.Max(1f, arrowTravelCells);
+            arrowTravelDistance = arrowSegmentLength * clampedCells;
+        }
+
+        private float CalculateSegmentLength()
+        {
+            if (gridManager != null)
+            {
+                Vector3 origin = gridManager.CellToWorld(Vector2Int.zero);
+                Vector3 neighbor = gridManager.CellToWorld(Vector2Int.right);
+                float length = Vector3.Distance(origin, neighbor);
+                if (length > 0.001f)
+                {
+                    return length;
+                }
+            }
+
+            return 1f;
+        }
     }
 }
