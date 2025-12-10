@@ -39,6 +39,7 @@ public class CameraGridFocusController : MonoBehaviour
     [SerializeField] private bool keepChatBubblesVisibleInSubGrid = true;
 
     public bool IsSubGridActive { get; private set; }
+    public Transform SubGridCenter => subGridCenter;
 
     private readonly Dictionary<GameObject, bool> defaultPanelVisibility = new();
 
