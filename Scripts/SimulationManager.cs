@@ -38,6 +38,7 @@ namespace MachineRepair
         private float[] pressureGraph;
         private float[] flowGraph;
         private bool[] signalGraph;
+        private int[] waterArrowSteps;
 
         private readonly List<LeakInfo> detectedLeaks = new();
 
@@ -162,6 +163,7 @@ namespace MachineRepair
             EnsureGraph(ref pressureGraph, cellCount);
             EnsureGraph(ref flowGraph, cellCount);
             EnsureGraph(ref signalGraph, cellCount);
+            EnsureGraph(ref waterArrowSteps, cellCount, -1);
 
             faultLog.Clear();
             componentsMissingReturn.Clear();
@@ -513,6 +515,7 @@ namespace MachineRepair
 
                     pressureGraph[idx] = cell.component.def.maxPressure;
                     flowGraph[idx] = Mathf.Max(0f, cell.component.def.flowCoef);
+                    waterArrowSteps[idx] = 0;
 
                     if (visited.Add(idx))
                     {
@@ -525,6 +528,7 @@ namespace MachineRepair
             {
                 var cellPos = queue.Dequeue();
                 int idx = grid.ToIndex(cellPos);
+                int stepCount = Mathf.Max(0, waterArrowSteps[idx]);
 
                 float pressure = pressureGraph[idx];
                 float flow = flowGraph[idx];
@@ -563,7 +567,13 @@ namespace MachineRepair
                         propagated = true;
                     }
 
-                    if (flow > 0f && propagated)
+                    int nextStep = stepCount + 1;
+                    if (waterArrowSteps[nIdx] == -1 || nextStep < waterArrowSteps[nIdx])
+                    {
+                        waterArrowSteps[nIdx] = nextStep;
+                    }
+
+                    if (flow > 0f && propagated && ShouldSpawnWaterArrow(nextStep))
                     {
                         AddWaterFlowArrow(cellPos, neighbor, flow);
                     }
@@ -765,6 +775,11 @@ namespace MachineRepair
             }
         }
 
+        private static bool ShouldSpawnWaterArrow(int stepsFromSource)
+        {
+            return stepsFromSource > 0 && stepsFromSource % 4 == 0;
+        }
+
         private bool IsWaterSupplyComponent(cellDef cell)
         {
             return cell.component != null
@@ -815,6 +830,16 @@ namespace MachineRepair
             {
                 System.Array.Clear(graph, 0, graph.Length);
             }
+        }
+
+        private static void EnsureGraph(ref int[] graph, int size, int clearValue)
+        {
+            if (graph == null || graph.Length != size)
+            {
+                graph = new int[size];
+            }
+
+            System.Array.Fill(graph, clearValue);
         }
 
         public struct SimulationSnapshot

@@ -26,7 +26,7 @@ namespace MachineRepair
         [Tooltip("Arrow sprite used to visualize water flow across pipes.")]
         [SerializeField] private SpriteRenderer pipeArrowPrefab;
         [SerializeField] private Transform pipeArrowParent;
-        [SerializeField] private float arrowTravelDistance = 0.35f;
+        [SerializeField] private float arrowTravelDistance = 3f;
         [SerializeField] private float arrowScrollSpeed = 1.25f;
 
         [Header("Leaks")]
