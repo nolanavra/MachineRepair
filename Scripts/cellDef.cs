@@ -10,6 +10,7 @@ namespace MachineRepair.Grid
     {
         public int index;
         public CellPlaceability placeability;
+        public bool isDisplayZone;
     }
 
     [System.Serializable]
@@ -60,6 +61,7 @@ namespace MachineRepair.Grid
     {
         public int index;
         public CellPlaceability placeability;
+        public bool isDisplayZone;
 
         // Contents of the cell:
         public MachineComponent component;    // machine / fixture
@@ -94,6 +96,7 @@ namespace MachineRepair.Grid
             {
                 index = terrain.index,
                 placeability = terrain.placeability,
+                isDisplayZone = terrain.isDisplayZone,
                 component = occupancy.component,
                 wires = occupancy.HasWire ? new List<PlacedWire>(occupancy.Wires) : null,
                 pipes = occupancy.HasPipe ? new List<PlacedPipe>(occupancy.Pipes) : null
