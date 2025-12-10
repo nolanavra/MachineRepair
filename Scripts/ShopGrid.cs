@@ -704,6 +704,13 @@ namespace MachineRepair.Grid
                 return isStart || isEnd;
             }
 
+            bool IsEndpointComponent(MachineComponent component)
+            {
+                if (component == null) return false;
+
+                return component == pipe.startComponent || component == pipe.endComponent;
+            }
+
             foreach (var c in cells)
             {
                 if (!InBounds(c.x, c.y))
@@ -722,7 +729,7 @@ namespace MachineRepair.Grid
                     return false;
                 }
 
-                if (occupancy.HasComponent && !IsPortCell(c, occupancy.component))
+                if (occupancy.HasComponent && !IsPortCell(c, occupancy.component) && !IsEndpointComponent(occupancy.component))
                 {
                     Debug.LogWarning($"AddPipeRun failed: cell {c} contains unrelated component '{occupancy.component.name}'.");
                     return false;
