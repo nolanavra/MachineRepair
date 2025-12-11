@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using MachineRepair;
-using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.EventSystems;     // For UI-hit checks
 using UnityEngine.InputSystem;      // New Input System
@@ -38,15 +37,9 @@ namespace MachineRepair.Grid
         [SerializeField] private PlayerInput playerInput;
         [SerializeField] private GridManager grid;
         [SerializeField] private Inventory inventory;
-        [SerializeField] private GameObject currentComponentPrefab;
         [SerializeField] private WirePlacementTool wireTool;
         [SerializeField] private PipePlacementTool pipeTool;
         private Camera cam;
-
-        [Header("Placement State")]
-        [SerializeField] private ThingDef currentPlacementDef;
-        [SerializeField] private int currentRotation;
-        private string currentPlacementItemId;
 
         [Header("Behavior")]
         [Tooltip("Ignore clicks when the pointer is over UI (recommended).")]
@@ -66,10 +59,7 @@ namespace MachineRepair.Grid
 
         private GameObject highlightObject;
         private SpriteRenderer highlightRenderer;
-        private GameObject placementPreviewObject;
-        private SpriteRenderer placementPreviewRenderer;
         private Vector2Int highlightLastPosition;
-        private readonly List<SpriteRenderer> footprintHighlights = new();
 
         private int selectionCycleIndex;
         private readonly List<SelectionEntry> selectionCycleOrder = new();
@@ -150,7 +140,7 @@ namespace MachineRepair.Grid
 
             // If we're disabled while a placement is in progress, refund the item
             // so the player doesn't lose inventory silently.
-            RefundPendingPlacement();
+            grid?.CancelPlacement(refundItem: true, revertMode: false);
 
             DisableInputActions();
         }
@@ -299,28 +289,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnLeftClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
         {
-            if (currentPlacementDef == null) return;
-
-            var footprintCells = GetFootprintCells(cellPos, currentPlacementDef, currentRotation);
-            var validation = ValidateFootprint(footprintCells);
-            if (!validation.IsValid) return;
-
-            MachineComponent machine = CreatePlacedComponent(cellPos, footprintCells);
-            if (machine == null) return;
-
-            for (int i = 0; i < footprintCells.OccupiedCells.Count; i++)
-            {
-                var target = footprintCells.OccupiedCells[i];
-                grid.TryPlaceComponent(target, machine, markTerrainConnectorsOnly: true);
-            }
-
-            if (grid != null)
-            {
-                grid.ApplyPortMarkers(machine);
-                grid.ApplyDisplaySprites(machine, footprintCells.DisplayCells);
-            }
-
-            ExitPlacementMode();
+            grid?.TryPlaceCurrent(cellPos);
         }
 
         /// <summary>
@@ -329,7 +298,7 @@ namespace MachineRepair.Grid
         /// </summary>
         private void OnRightClick_ComponentPlacement(cellDef cell, Vector2Int cellPos)
         {
-            CancelPlacement(returnItemToInventory: true);
+            grid?.CancelPlacement(refundItem: true);
         }
 
         #endregion
@@ -565,21 +534,20 @@ namespace MachineRepair.Grid
 
             bool isPlacement = GameModeManager.Instance != null &&
                                GameModeManager.Instance.CurrentMode == GameMode.ComponentPlacement &&
-                               currentPlacementDef != null;
+                               grid != null &&
+                               grid.IsPlacementActive;
 
             // Get mouse cell and validate
             Vector2Int pos = GetMousePos();
 
             if (isPlacement)
             {
-                var cells = GetFootprintCells(pos, currentPlacementDef, currentRotation);
-                var validation = ValidateFootprint(cells);
-                SetFootprintHighlights(cells, validation);
+                grid.UpdatePlacementPreview(pos);
                 if (highlightObject != null) highlightObject.SetActive(false);
             }
             else
             {
-                SetFootprintHighlightsActive(false);
+                grid?.UpdatePlacementPreview(pos);
                 if (!grid.InBounds(pos.x, pos.y))
                 {
                     if (highlightObject != null) highlightObject.SetActive(false);
@@ -618,8 +586,7 @@ namespace MachineRepair.Grid
             // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
             if (oldMode == GameMode.ComponentPlacement)
             {
-                RefundPendingPlacement();
-                ClearPlacementVisuals();
+                grid?.CancelPlacement(refundItem: true, revertMode: false);
             }
             else if (oldMode == GameMode.WirePlacement)
             {
@@ -627,317 +594,6 @@ namespace MachineRepair.Grid
             }
         }
 
-        #region Component Placement Helpers
-        public bool BeginComponentPlacement(string itemId, bool removeFromInventory = true)
-        {
-            if (string.IsNullOrEmpty(itemId) || inventory == null) return false;
-
-            ThingDef def = inventory.GetDef(itemId);
-            if (def == null) return false;
-
-            if (removeFromInventory && !inventory.RemoveItem(itemId, 1)) return false;
-
-            currentPlacementDef = def;
-            currentPlacementItemId = itemId;
-            currentRotation = 0;
-            GameModeManager.Instance?.SetMode(GameMode.ComponentPlacement);
-            return true;
-        }
-
-        private void HandlePlacementRotation()
-        {
-            if (GameModeManager.Instance == null) return;
-            if (GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
-            if (currentPlacementDef == null) return;
-
-            currentRotation = (currentRotation + 1) % 4;
-        }
-
-        private GridManager.FootprintCells GetFootprintCells(Vector2Int originCell, ThingDef def, int rotation)
-        {
-            if (def == null || grid == null)
-            {
-                return new GridManager.FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
-            }
-
-            return grid.GetFootprintCells(originCell, def.footprint, rotation);
-        }
-
-        private static List<Vector2Int> CollectAllFootprintCells(GridManager.FootprintCells cells)
-        {
-            var allCells = new List<Vector2Int>();
-            if (cells.OccupiedCells != null)
-            {
-                allCells.AddRange(cells.OccupiedCells);
-            }
-
-            if (cells.DisplayCells != null)
-            {
-                for (int i = 0; i < cells.DisplayCells.Count; i++)
-                {
-                    var displayCell = cells.DisplayCells[i];
-                    if (!allCells.Contains(displayCell)) allCells.Add(displayCell);
-                }
-            }
-
-            return allCells;
-        }
-
-        private Vector3 GetFootprintCenterWorld(GridManager.FootprintCells cells)
-        {
-            var allCells = CollectAllFootprintCells(cells);
-            if (grid == null || allCells.Count == 0) return Vector3.zero;
-
-            Vector3 sum = Vector3.zero;
-            for (int i = 0; i < allCells.Count; i++)
-            {
-                sum += grid.CellToWorld(allCells[i]);
-            }
-
-            return sum / allCells.Count;
-        }
-
-        private readonly struct FootprintValidationResult
-        {
-            public readonly bool IsValid;
-            public readonly bool DisplayRequirementFailed;
-
-            public FootprintValidationResult(bool isValid, bool displayRequirementFailed)
-            {
-                IsValid = isValid;
-                DisplayRequirementFailed = displayRequirementFailed;
-            }
-        }
-
-        private FootprintValidationResult ValidateFootprint(GridManager.FootprintCells cells)
-        {
-            if (grid == null) return new FootprintValidationResult(false, false);
-
-            bool hasAnyCells = (cells.OccupiedCells != null && cells.OccupiedCells.Count > 0)
-                || (cells.DisplayCells != null && cells.DisplayCells.Count > 0);
-            if (!hasAnyCells) return new FootprintValidationResult(false, false);
-
-            HashSet<Vector2Int> displayCellSet = null;
-            if (cells.DisplayCells != null && cells.DisplayCells.Count > 0)
-            {
-                displayCellSet = new HashSet<Vector2Int>(cells.DisplayCells);
-            }
-
-            if (cells.DisplayCells != null)
-            {
-                for (int i = 0; i < cells.DisplayCells.Count; i++)
-                {
-                    Vector2Int c = cells.DisplayCells[i];
-                    if (!grid.InBounds(c.x, c.y)) return new FootprintValidationResult(false, true);
-                    var cell = grid.GetCell(c);
-                    if (cell.placeability != CellPlaceability.Display) return new FootprintValidationResult(false, true);
-                    if (cell.HasComponent) return new FootprintValidationResult(false, true);
-                }
-            }
-
-            if (cells.OccupiedCells != null)
-            {
-                for (int i = 0; i < cells.OccupiedCells.Count; i++)
-                {
-                    Vector2Int c = cells.OccupiedCells[i];
-                    if (displayCellSet != null && displayCellSet.Contains(c)) continue;
-                    if (!grid.InBounds(c.x, c.y)) return new FootprintValidationResult(false, false);
-                    var cell = grid.GetCell(c);
-                    if (cell.placeability == CellPlaceability.Blocked ||
-                        cell.placeability == CellPlaceability.ConnectorsOnly ||
-                        cell.placeability == CellPlaceability.Display)
-                        return new FootprintValidationResult(false, false);
-                    if (cell.HasComponent) return new FootprintValidationResult(false, false);
-                }
-            }
-
-            return new FootprintValidationResult(true, false);
-        }
-
-        private MachineComponent CreatePlacedComponent(Vector2Int anchorCell, GridManager.FootprintCells footprintCells)
-        {
-            if (currentPlacementDef == null || grid == null) return null;
-
-            GameObject instance = currentComponentPrefab != null
-                ? Instantiate(currentComponentPrefab)
-                : new GameObject(currentPlacementDef.displayName ?? currentPlacementDef.defName ?? "MachineComponent");
-
-            instance.name = currentPlacementDef.displayName ?? currentPlacementDef.defName ?? instance.name;
-
-            var machine = instance.GetComponent<MachineComponent>();
-            if (machine == null)
-                machine = instance.AddComponent<MachineComponent>();
-
-            machine.def = currentPlacementDef;
-            machine.grid = grid;
-            machine.footprint = currentPlacementDef.footprint;
-            machine.rotation = currentRotation;
-            machine.anchorCell = anchorCell;
-            machine.portDef = currentPlacementDef.connectionPorts;
-
-            Vector3 center = GetFootprintCenterWorld(footprintCells);
-            if (center == Vector3.zero)
-                center = grid.CellToWorld(anchorCell);
-
-            instance.transform.position = center;
-            instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentRotation);
-            instance.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
-
-            var spriteRenderer = instance.GetComponent<SpriteRenderer>();
-            if (spriteRenderer == null)
-                spriteRenderer = instance.AddComponent<SpriteRenderer>();
-
-            spriteRenderer.sprite = currentPlacementDef.sprite;
-            spriteRenderer.color = Color.white;
-            spriteRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
-
-            return machine;
-        }
-
-        private void SetFootprintHighlights(GridManager.FootprintCells cells, FootprintValidationResult validation)
-        {
-            var allCells = CollectAllFootprintCells(cells);
-            if (allCells.Count == 0)
-            {
-                SetFootprintHighlightsActive(false);
-                return;
-            }
-
-            EnsureFootprintHighlightPool(allCells.Count);
-            Color color = validation.IsValid
-                ? highlightTint
-                : validation.DisplayRequirementFailed
-                    ? displayRequirementTint
-                    : new Color(1f, 0f, 0f, highlightTint.a);
-
-            for (int i = 0; i < allCells.Count; i++)
-            {
-                var rend = footprintHighlights[i];
-                rend.color = color;
-                rend.gameObject.SetActive(true);
-                rend.transform.position = new Vector3(allCells[i].x + 0.5f, allCells[i].y + 0.5f, 0f);
-            }
-
-            UpdatePlacementPreview(cells, color);
-
-            for (int i = allCells.Count; i < footprintHighlights.Count; i++)
-            {
-                footprintHighlights[i].gameObject.SetActive(false);
-            }
-        }
-
-        private void UpdatePlacementPreview(GridManager.FootprintCells cells, Color tint)
-        {
-            if (currentPlacementDef == null || currentPlacementDef.sprite == null)
-            {
-                SetPlacementPreviewActive(false);
-                return;
-            }
-
-            EnsurePlacementPreview();
-
-            placementPreviewRenderer.sprite = currentPlacementDef.sprite;
-            placementPreviewRenderer.color = new Color(tint.r, tint.g, tint.b, 0.5f);
-            placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
-            placementPreviewRenderer.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
-            placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentRotation);
-            placementPreviewRenderer.transform.position = GetFootprintCenterWorld(cells);
-            SetPlacementPreviewActive(true);
-        }
-
-        private void EnsureFootprintHighlightPool(int count)
-        {
-            while (footprintHighlights.Count < count)
-            {
-                var go = new GameObject("footprintHighlight");
-                go.transform.SetParent(transform, worldPositionStays: true);
-                var renderer = go.AddComponent<SpriteRenderer>();
-                renderer.sprite = highlightSprite;
-                renderer.color = highlightTint;
-                renderer.sortingLayerName = highlightSortingLayer;
-                renderer.sortingOrder = highlightSortingOrder;
-                go.transform.localScale = new Vector3(highlightScale.x, highlightScale.y, 1f);
-                footprintHighlights.Add(renderer);
-            }
-        }
-
-        private void EnsurePlacementPreview()
-        {
-            if (placementPreviewObject == null)
-            {
-                placementPreviewObject = new GameObject("componentPreview");
-                placementPreviewObject.transform.SetParent(transform, worldPositionStays: true);
-            }
-
-            placementPreviewRenderer = placementPreviewObject.GetComponent<SpriteRenderer>();
-            if (placementPreviewRenderer == null)
-                placementPreviewRenderer = placementPreviewObject.AddComponent<SpriteRenderer>();
-
-            placementPreviewRenderer.sortingLayerName = highlightSortingLayer;
-        }
-
-        private void SetFootprintHighlightsActive(bool active)
-        {
-            for (int i = 0; i < footprintHighlights.Count; i++)
-                footprintHighlights[i].gameObject.SetActive(active);
-            if (!active)
-                SetPlacementPreviewActive(false);
-        }
-
-        private void SetPlacementPreviewActive(bool active)
-        {
-            if (placementPreviewObject != null)
-                placementPreviewObject.SetActive(active);
-        }
-
-        private void CancelPlacement(bool returnItemToInventory)
-        {
-            ResetPlacementState(returnItemToInventory);
-            GameModeManager.Instance?.SetMode(GameMode.Selection);
-        }
-
-        public void DeselectPlacementAndReturnToInventory()
-        {
-            CancelPlacement(returnItemToInventory: true);
-        }
-
-        private void ExitPlacementMode()
-        {
-            ResetPlacementState(returnItem: false);
-            GameModeManager.Instance?.SetMode(GameMode.Selection);
-        }
-
-        private void ResetPlacementState(bool returnItem)
-        {
-            if (returnItem && !string.IsNullOrEmpty(currentPlacementItemId) && inventory != null)
-            {
-                inventory.AddItem(currentPlacementItemId, 1);
-            }
-
-            currentPlacementDef = null;
-            currentPlacementItemId = null;
-            currentRotation = 0;
-
-            ClearPlacementVisuals();
-        }
-
-        private void RefundPendingPlacement()
-        {
-            // Used when we leave placement via external means (mode change, disable) without placing.
-            if (currentPlacementDef == null) return;
-            ResetPlacementState(returnItem: true);
-        }
-
-        private void ClearPlacementVisuals()
-        {
-            SetFootprintHighlightsActive(false);
-            highlightLastPosition = new Vector2Int(int.MinValue, int.MinValue);
-            if (highlightObject != null)
-            {
-                // Keep the hover highlight hidden when exiting placement; Selection will re-enable as needed.
-                highlightObject.SetActive(false);
-            }
-        }
         #endregion
 
         #region Input Actions
@@ -1073,8 +729,10 @@ namespace MachineRepair.Grid
         private void OnRotatePlacementPerformed(InputAction.CallbackContext ctx)
         {
             if (!ctx.performed) return;
-            HandlePlacementRotation();
-            LogInputEvent($"Rotate placement input; new rotation index {currentRotation}");
+            if (GameModeManager.Instance == null || GameModeManager.Instance.CurrentMode != GameMode.ComponentPlacement) return;
+
+            grid?.RotatePlacement();
+            LogInputEvent($"Rotate placement input");
         }
 
         private void OnDeleteSelectionPerformed(InputAction.CallbackContext ctx)

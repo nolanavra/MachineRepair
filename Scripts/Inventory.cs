@@ -258,6 +258,24 @@ public class Inventory : MonoBehaviour
     }
 
     /// <summary>
+    /// Consume a single item for placement. Returns false if the item is missing.
+    /// </summary>
+    public bool TryConsumeForPlacement(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+        return RemoveItem(id, 1);
+    }
+
+    /// <summary>
+    /// Refund a placement reservation back into the inventory.
+    /// </summary>
+    public void RefundPlacementItem(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        AddItem(id, 1);
+    }
+
+    /// <summary>
     /// Swap two slot positions. Returns false if indices are invalid.
     /// </summary>
     public bool SwapSlots(int fromIndex, int toIndex)

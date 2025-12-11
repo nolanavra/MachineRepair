@@ -56,6 +56,17 @@ namespace MachineRepair.Grid
         [SerializeField] private ThingDef chassisWaterConnectionDef;
         [SerializeField] private GameObject componentPrefab;
 
+        [Header("Placement")]
+        [SerializeField] private Inventory inventory;
+        [SerializeField] private Sprite placementHighlightSprite;
+        [SerializeField] private Sprite placementPreviewSpriteOverride;
+        [SerializeField] private string placementHighlightSortingLayer = "Default";
+        [SerializeField] private int placementHighlightSortingOrder = 1000;
+        [SerializeField] private Vector2 placementHighlightScale = new Vector2(1f, 1f);
+        [SerializeField] private Color placementValidTint = new Color(1f, 1f, 0f, 0.25f);
+        [SerializeField] private Color placementDisplayRequirementTint = new Color(1f, 0.65f, 0f, 0.25f);
+        [SerializeField] private Color placementInvalidTint = new Color(1f, 0f, 0f, 0.25f);
+
         [Header("Port Markers")]
         [SerializeField] private Sprite portMarkerSprite;
         [SerializeField] private string portMarkerSortingLayer = "Default";
@@ -93,12 +104,20 @@ namespace MachineRepair.Grid
         private SpriteRenderer[] cellHighlights;
         private SpriteRenderer[] subGridHighlights;
 
+        private ThingDef currentPlacementDef;
+        private string currentPlacementItemId;
+        private int currentPlacementRotation;
+        private readonly List<SpriteRenderer> placementHighlights = new();
+        private GameObject placementPreviewObject;
+        private SpriteRenderer placementPreviewRenderer;
+
         private void Start()
         {
 
         }
         void Awake()
         {
+            if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
             cellDefByType();
             InitGrids();
             setup = true;
@@ -260,6 +279,61 @@ namespace MachineRepair.Grid
             return true;
         }
 
+        private readonly struct FootprintValidationResult
+        {
+            public readonly bool IsValid;
+            public readonly bool DisplayRequirementFailed;
+
+            public FootprintValidationResult(bool isValid, bool displayRequirementFailed)
+            {
+                IsValid = isValid;
+                DisplayRequirementFailed = displayRequirementFailed;
+            }
+        }
+
+        private FootprintValidationResult ValidateFootprint(FootprintCells cells)
+        {
+            bool hasAnyCells = (cells.OccupiedCells != null && cells.OccupiedCells.Count > 0)
+                || (cells.DisplayCells != null && cells.DisplayCells.Count > 0);
+            if (!hasAnyCells) return new FootprintValidationResult(false, false);
+
+            HashSet<Vector2Int> displayCellSet = null;
+            if (cells.DisplayCells != null && cells.DisplayCells.Count > 0)
+            {
+                displayCellSet = new HashSet<Vector2Int>(cells.DisplayCells);
+            }
+
+            if (cells.DisplayCells != null)
+            {
+                for (int i = 0; i < cells.DisplayCells.Count; i++)
+                {
+                    Vector2Int c = cells.DisplayCells[i];
+                    if (!InBounds(c.x, c.y)) return new FootprintValidationResult(false, true);
+                    var cell = GetCell(c);
+                    if (cell.placeability != CellPlaceability.Display) return new FootprintValidationResult(false, true);
+                    if (cell.HasComponent) return new FootprintValidationResult(false, true);
+                }
+            }
+
+            if (cells.OccupiedCells != null)
+            {
+                for (int i = 0; i < cells.OccupiedCells.Count; i++)
+                {
+                    Vector2Int c = cells.OccupiedCells[i];
+                    if (displayCellSet != null && displayCellSet.Contains(c)) continue;
+                    if (!InBounds(c.x, c.y)) return new FootprintValidationResult(false, false);
+                    var cell = GetCell(c);
+                    if (cell.placeability == CellPlaceability.Blocked ||
+                        cell.placeability == CellPlaceability.ConnectorsOnly ||
+                        cell.placeability == CellPlaceability.Display)
+                        return new FootprintValidationResult(false, false);
+                    if (cell.HasComponent) return new FootprintValidationResult(false, false);
+                }
+            }
+
+            return new FootprintValidationResult(true, false);
+        }
+
         public FootprintCells GetFootprintCells(Vector2Int anchorCell, FootprintMask footprint, int rotationSteps = 0)
         {
             var occupiedCells = new List<Vector2Int>();
@@ -288,6 +362,12 @@ namespace MachineRepair.Grid
             return new FootprintCells(occupiedCells, displayCells);
         }
 
+        public FootprintCells GetFootprintCells(Vector2Int anchorCell, ThingDef def, int rotationSteps = 0)
+        {
+            if (def == null) return new FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
+            return GetFootprintCells(anchorCell, def.footprint, rotationSteps);
+        }
+
         private FootprintCells GetFootprintCells(MachineComponent component)
         {
             if (component == null || component.footprint.occupied == null) return new FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
@@ -295,7 +375,46 @@ namespace MachineRepair.Grid
             return GetFootprintCells(component.anchorCell, component.footprint, component.rotation);
         }
 
+        private static List<Vector2Int> CollectAllFootprintCells(FootprintCells cells)
+        {
+            var allCells = new List<Vector2Int>();
+            if (cells.OccupiedCells != null)
+            {
+                allCells.AddRange(cells.OccupiedCells);
+            }
+
+            if (cells.DisplayCells != null)
+            {
+                for (int i = 0; i < cells.DisplayCells.Count; i++)
+                {
+                    var displayCell = cells.DisplayCells[i];
+                    if (!allCells.Contains(displayCell)) allCells.Add(displayCell);
+                }
+            }
+
+            return allCells;
+        }
+
+        private Vector3 GetFootprintCenterWorld(FootprintCells cells)
+        {
+            var allCells = CollectAllFootprintCells(cells);
+            if (allCells.Count == 0) return Vector3.zero;
+
+            Vector3 sum = Vector3.zero;
+            for (int i = 0; i < allCells.Count; i++)
+            {
+                sum += CellToWorld(allCells[i]);
+            }
+
+            return sum / allCells.Count;
+        }
+
         private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell)
+        {
+            return CreateComponentInstance(def, anchorCell, 0, CellToWorld(anchorCell));
+        }
+
+        private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell, int rotationSteps, Vector3 worldPosition)
         {
             GameObject instance = componentPrefab != null
                 ? Instantiate(componentPrefab)
@@ -310,12 +429,12 @@ namespace MachineRepair.Grid
             machine.def = def;
             machine.grid = this;
             machine.footprint = def.footprint;
-            machine.rotation = 0;
+            machine.rotation = rotationSteps;
             machine.anchorCell = anchorCell;
             machine.portDef = def.connectionPorts;
 
-            instance.transform.position = CellToWorld(anchorCell);
-            instance.transform.rotation = Quaternion.identity;
+            instance.transform.position = worldPosition;
+            instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
             instance.transform.localScale = Vector3.one * def.placedSpriteScale;
 
             var spriteRenderer = instance.GetComponent<SpriteRenderer>();
@@ -369,6 +488,203 @@ namespace MachineRepair.Grid
                 displaySpriteSortingLayer,
                 displaySpriteSortingOrder);
         }
+
+        #region Placement
+
+        public bool IsPlacementActive => currentPlacementDef != null;
+
+        public bool TryStartPlacement(string itemId)
+        {
+            if (string.IsNullOrEmpty(itemId) || inventory == null) return false;
+
+            var def = inventory.GetDef(itemId);
+            if (def == null) return false;
+
+            if (!inventory.TryConsumeForPlacement(itemId)) return false;
+
+            currentPlacementDef = def;
+            currentPlacementItemId = itemId;
+            currentPlacementRotation = 0;
+            GameModeManager.Instance?.SetMode(GameMode.ComponentPlacement);
+            return true;
+        }
+
+        public void RotatePlacement()
+        {
+            if (!IsPlacementActive) return;
+            currentPlacementRotation = (currentPlacementRotation + 1) % 4;
+        }
+
+        public bool TryPlaceCurrent(Vector2Int anchorCell)
+        {
+            if (!IsPlacementActive) return false;
+
+            var cells = GetFootprintCells(anchorCell, currentPlacementDef, currentPlacementRotation);
+            var validation = ValidateFootprint(cells);
+            if (!validation.IsValid) return false;
+
+            Vector3 center = GetFootprintCenterWorld(cells);
+            if (center == Vector3.zero) center = CellToWorld(anchorCell);
+
+            MachineComponent machine = CreateComponentInstance(currentPlacementDef, anchorCell, currentPlacementRotation, center);
+            if (machine == null) return false;
+
+            if (!TryPlaceComponentFootprint(machine, cells.OccupiedCells))
+            {
+                if (Application.isPlaying)
+                    Destroy(machine.gameObject);
+                else
+                    DestroyImmediate(machine.gameObject);
+                return false;
+            }
+
+            ApplyDisplaySprites(machine, cells.DisplayCells);
+            SetPlacementHighlightsActive(false);
+            ClearPlacementState(false);
+            GameModeManager.Instance?.SetMode(GameMode.Selection);
+            return true;
+        }
+
+        public void CancelPlacement(bool refundItem, bool revertMode = true)
+        {
+            if (!IsPlacementActive) return;
+            if (refundItem && inventory != null)
+            {
+                inventory.RefundPlacementItem(currentPlacementItemId);
+            }
+
+            ClearPlacementState(true);
+            if (revertMode)
+            {
+                GameModeManager.Instance?.SetMode(GameMode.Selection);
+            }
+        }
+
+        public void UpdatePlacementPreview(Vector2Int pointerCell)
+        {
+            if (!IsPlacementActive)
+            {
+                SetPlacementHighlightsActive(false);
+                return;
+            }
+
+            var cells = GetFootprintCells(pointerCell, currentPlacementDef, currentPlacementRotation);
+            var validation = ValidateFootprint(cells);
+            SetPlacementHighlights(cells, validation);
+        }
+
+        private void ClearPlacementState(bool clearVisuals)
+        {
+            currentPlacementDef = null;
+            currentPlacementItemId = null;
+            currentPlacementRotation = 0;
+
+            if (clearVisuals)
+            {
+                SetPlacementHighlightsActive(false);
+            }
+        }
+
+        private void EnsurePlacementPreview()
+        {
+            if (placementPreviewObject == null)
+            {
+                placementPreviewObject = new GameObject("componentPreview");
+                placementPreviewObject.transform.SetParent(transform, worldPositionStays: true);
+            }
+
+            placementPreviewRenderer = placementPreviewObject.GetComponent<SpriteRenderer>();
+            if (placementPreviewRenderer == null)
+                placementPreviewRenderer = placementPreviewObject.AddComponent<SpriteRenderer>();
+
+            placementPreviewRenderer.sortingLayerName = placementHighlightSortingLayer;
+            placementPreviewRenderer.sortingOrder = placementHighlightSortingOrder;
+        }
+
+        private void EnsurePlacementHighlightPool(int count)
+        {
+            while (placementHighlights.Count < count)
+            {
+                var go = new GameObject("footprintHighlight");
+                go.transform.SetParent(transform, worldPositionStays: true);
+                var renderer = go.AddComponent<SpriteRenderer>();
+                renderer.sprite = placementHighlightSprite;
+                renderer.color = placementValidTint;
+                renderer.sortingLayerName = placementHighlightSortingLayer;
+                renderer.sortingOrder = placementHighlightSortingOrder;
+                go.transform.localScale = new Vector3(placementHighlightScale.x, placementHighlightScale.y, 1f);
+                placementHighlights.Add(renderer);
+            }
+        }
+
+        private void SetPlacementHighlights(FootprintCells cells, FootprintValidationResult validation)
+        {
+            var allCells = CollectAllFootprintCells(cells);
+            if (allCells.Count == 0)
+            {
+                SetPlacementHighlightsActive(false);
+                return;
+            }
+
+            EnsurePlacementHighlightPool(allCells.Count);
+            Color color = validation.IsValid
+                ? placementValidTint
+                : validation.DisplayRequirementFailed
+                    ? placementDisplayRequirementTint
+                    : placementInvalidTint;
+
+            for (int i = 0; i < allCells.Count; i++)
+            {
+                var rend = placementHighlights[i];
+                rend.color = color;
+                rend.gameObject.SetActive(true);
+                rend.transform.position = new Vector3(allCells[i].x + 0.5f, allCells[i].y + 0.5f, 0f);
+            }
+
+            UpdatePlacementPreview(cells, color);
+
+            for (int i = allCells.Count; i < placementHighlights.Count; i++)
+            {
+                placementHighlights[i].gameObject.SetActive(false);
+            }
+        }
+
+        private void UpdatePlacementPreview(FootprintCells cells, Color tint)
+        {
+            if (currentPlacementDef == null)
+            {
+                SetPlacementPreviewActive(false);
+                return;
+            }
+
+            EnsurePlacementPreview();
+
+            placementPreviewRenderer.sprite = placementPreviewSpriteOverride != null
+                ? placementPreviewSpriteOverride
+                : currentPlacementDef.sprite;
+            placementPreviewRenderer.color = new Color(tint.r, tint.g, tint.b, 0.5f);
+            placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
+            placementPreviewRenderer.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
+            placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentPlacementRotation);
+            placementPreviewRenderer.transform.position = GetFootprintCenterWorld(cells);
+            SetPlacementPreviewActive(true);
+        }
+
+        private void SetPlacementHighlightsActive(bool active)
+        {
+            for (int i = 0; i < placementHighlights.Count; i++)
+                placementHighlights[i].gameObject.SetActive(active);
+            if (!active)
+                SetPlacementPreviewActive(false);
+        }
+
+        private void SetPlacementPreviewActive(bool active)
+        {
+            if (placementPreviewObject != null)
+                placementPreviewObject.SetActive(active);
+        }
+
+        #endregion
 
         public void UpdateSubGrid()
         {
