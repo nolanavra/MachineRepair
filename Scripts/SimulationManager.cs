@@ -34,8 +34,6 @@ namespace MachineRepair
         private int simulationStepCount;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
-        private float[] voltageGraph;
-        private float[] currentGraph;
         private float[] pressureGraph;
         private float[] flowGraph;
         private bool[] signalGraph;
@@ -47,6 +45,13 @@ namespace MachineRepair
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
         private readonly HashSet<PlacedWire> completedCircuitWires = new();
         private readonly List<WaterFlowArrow> waterFlowArrows = new();
+
+        private readonly HashSet<MachineComponent> poweredComponents = new();
+        private readonly HashSet<PlacedWire> poweredWires = new();
+        private readonly Dictionary<MachineComponent, float> componentVoltage = new();
+        private readonly Dictionary<MachineComponent, float> componentCurrent = new();
+        private readonly Dictionary<PlacedWire, float> wireVoltage = new();
+        private readonly Dictionary<PlacedWire, float> wireCurrent = new();
 
         private static readonly Vector2Int[] WaterPropagationOffsets =
         {
@@ -123,7 +128,6 @@ namespace MachineRepair
 
             BuildGraphs();
             PropagateVoltageCurrent();
-            UpdateComponentPowerStates();
             PropagatePressureFlow();
             EvaluateSignalStates();
             UpdateComponentBehaviors();
@@ -155,6 +159,12 @@ namespace MachineRepair
             UpdateChassisPowerAvailability(powerOn);
             ApplyWireBloom(completedCircuitWires, powerOn);
             PowerToggled?.Invoke(powerOn);
+
+            if (!powerOn)
+            {
+                DepowerAllComponents();
+                DepowerAllWires();
+            }
         }
 
         public void SetWater(bool enabled)
@@ -173,8 +183,6 @@ namespace MachineRepair
             if (grid == null) return;
 
             int cellCount = grid.CellCount;
-            EnsureGraph(ref voltageGraph, cellCount);
-            EnsureGraph(ref currentGraph, cellCount);
             EnsureGraph(ref pressureGraph, cellCount);
             EnsureGraph(ref flowGraph, cellCount);
             EnsureGraph(ref signalGraph, cellCount);
@@ -186,10 +194,12 @@ namespace MachineRepair
 
         private void PropagateVoltageCurrent()
         {
-            if (grid == null || voltageGraph == null || currentGraph == null) return;
+            if (grid == null) return;
 
             if (!powerOn)
             {
+                DepowerAllComponents();
+                DepowerAllWires();
                 return;
             }
 
@@ -202,8 +212,12 @@ namespace MachineRepair
             var wires = CollectPowerWires();
             var adjacency = BuildPowerAdjacency(wires);
 
-            var poweredNodes = new Dictionary<Vector2Int, (float voltage, float current)>();
-            var poweredWires = new List<(PlacedWire wire, float voltage, float current)>();
+            poweredComponents.Clear();
+            poweredWires.Clear();
+            componentVoltage.Clear();
+            componentCurrent.Clear();
+            wireVoltage.Clear();
+            wireCurrent.Clear();
 
             foreach (var output in chassisOutputs)
             {
@@ -220,82 +234,11 @@ namespace MachineRepair
                     continue;
                 }
 
-                foreach (var node in visited)
-                {
-                    poweredNodes[node] = MergePower(poweredNodes, node, output.Voltage, output.Current);
-                }
-
-                foreach (var wire in wires)
-                {
-                    if (!visited.Contains(wire.startPortCell) || !visited.Contains(wire.endPortCell)) continue;
-
-                    poweredWires.Add((wire, output.Voltage, output.Current));
-                }
+                BuildCircuitFromVisited(visited, portByCell, wires, output.Voltage, output.Current);
             }
 
-            ApplyPowerToGraph(poweredNodes, poweredWires, portByCell);
             UpdatePoweredCircuitWires(poweredWires);
-        }
-
-        private void UpdateComponentPowerStates()
-        {
-            if (grid == null || voltageGraph == null) return;
-
-            var processed = new HashSet<MachineComponent>();
-
-            for (int y = 0; y < grid.height; y++)
-            {
-                for (int x = 0; x < grid.width; x++)
-                {
-                    var cell = grid.GetCell(new Vector2Int(x, y));
-                    var component = cell.component;
-                    if (component == null) continue;
-                    if (!processed.Add(component)) continue;
-
-                    bool powered = IsComponentInPoweredCircuit(component);
-                    component.SetPowered(powered);
-                }
-            }
-        }
-
-        private bool IsComponentInPoweredCircuit(MachineComponent component)
-        {
-            if (!powerOn || grid == null || voltageGraph == null || component == null) return false;
-
-            bool hasPowerPort = false;
-
-            if (component.portDef?.ports != null)
-            {
-                for (int i = 0; i < component.portDef.ports.Length; i++)
-                {
-                    var port = component.portDef.ports[i];
-                    if (port.port != PortType.Power) continue;
-
-                    hasPowerPort = true;
-                    Vector2Int cell = component.GetGlobalCell(port);
-                    if (!grid.InBounds(cell.x, cell.y)) continue;
-
-                    int idx = grid.ToIndex(cell);
-                    if (voltageGraph[idx] > 0f)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            if (!hasPowerPort) return false;
-
-            Vector2Int anchor = component.anchorCell;
-            if (grid.InBounds(anchor.x, anchor.y))
-            {
-                int anchorIdx = grid.ToIndex(anchor);
-                if (voltageGraph[anchorIdx] > 0f)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            DepowerUnvisitedComponents();
         }
 
         private void CollectPowerPorts(
@@ -439,16 +382,6 @@ namespace MachineRepair
             }
         }
 
-        private static (float voltage, float current) MergePower(Dictionary<Vector2Int, (float voltage, float current)> poweredNodes, Vector2Int node, float voltage, float current)
-        {
-            if (poweredNodes.TryGetValue(node, out var existing))
-            {
-                return (Mathf.Max(existing.voltage, voltage), Mathf.Max(existing.current, current));
-            }
-
-            return (voltage, current);
-        }
-
         private void MarkMissingReturnComponents(IEnumerable<Vector2Int> visited, Dictionary<Vector2Int, PowerPort> portByCell)
         {
             foreach (var node in visited)
@@ -462,67 +395,164 @@ namespace MachineRepair
             }
         }
 
-        private void ApplyPowerToGraph(
-            Dictionary<Vector2Int, (float voltage, float current)> poweredNodes,
-            IEnumerable<(PlacedWire wire, float voltage, float current)> poweredWires,
-            Dictionary<Vector2Int, PowerPort> portByCell)
+        private void BuildCircuitFromVisited(
+            IEnumerable<Vector2Int> visited,
+            Dictionary<Vector2Int, PowerPort> portByCell,
+            IReadOnlyList<PlacedWire> wires,
+            float voltage,
+            float current)
         {
-            foreach (var kvp in poweredNodes)
-            {
-                int idx = grid.ToIndex(kvp.Key);
-                voltageGraph[idx] = Mathf.Max(voltageGraph[idx], kvp.Value.voltage);
-                currentGraph[idx] = Mathf.Max(currentGraph[idx], kvp.Value.current);
+            var circuitComponents = new HashSet<MachineComponent>();
+            var circuitWires = new HashSet<PlacedWire>();
 
-                if (portByCell.TryGetValue(kvp.Key, out var port) && port.Component != null)
+            foreach (var node in visited)
+            {
+                if (portByCell.TryGetValue(node, out var port) && port.Component != null)
                 {
-                    var anchor = port.Component.anchorCell;
-                    if (grid.InBounds(anchor.x, anchor.y))
-                    {
-                        int anchorIdx = grid.ToIndex(anchor);
-                        voltageGraph[anchorIdx] = Mathf.Max(voltageGraph[anchorIdx], kvp.Value.voltage);
-                        currentGraph[anchorIdx] = Mathf.Max(currentGraph[anchorIdx], kvp.Value.current);
-                    }
+                    circuitComponents.Add(port.Component);
+                }
+
+                foreach (var wire in wires)
+                {
+                    if (wire == null) continue;
+                    if (!node.Equals(wire.startPortCell) && !node.Equals(wire.endPortCell)) continue;
+
+                    circuitWires.Add(wire);
                 }
             }
 
-            foreach (var entry in poweredWires)
+            foreach (var component in circuitComponents)
             {
-                var wire = entry.wire;
+                ApplyComponentPower(component, voltage, current);
+            }
+
+            foreach (var wire in circuitWires)
+            {
+                ApplyWirePower(wire, voltage, current);
+            }
+
+            foreach (var wire in circuitWires)
+            {
+                poweredWires.Add(wire);
+            }
+        }
+
+        private void ApplyComponentPower(MachineComponent component, float voltage, float current)
+        {
+            if (component == null) return;
+
+            component.SetPowered(true);
+            poweredComponents.Add(component);
+
+            if (componentVoltage.TryGetValue(component, out var existingVoltage))
+            {
+                voltage = Mathf.Max(existingVoltage, voltage);
+            }
+
+            if (componentCurrent.TryGetValue(component, out var existingCurrent))
+            {
+                current = Mathf.Max(existingCurrent, current);
+            }
+
+            componentVoltage[component] = voltage;
+            componentCurrent[component] = current;
+        }
+
+        private void ApplyWirePower(PlacedWire wire, float voltage, float current)
+        {
+            if (wire == null) return;
+
+            wire.voltage = Mathf.Max(wire.voltage, voltage);
+            wire.current = Mathf.Max(wire.current, current);
+            wire.SetCircuitPowered(true);
+
+            if (wireVoltage.TryGetValue(wire, out var existingVoltage))
+            {
+                voltage = Mathf.Max(existingVoltage, voltage);
+            }
+
+            if (wireCurrent.TryGetValue(wire, out var existingCurrent))
+            {
+                current = Mathf.Max(existingCurrent, current);
+            }
+
+            wireVoltage[wire] = voltage;
+            wireCurrent[wire] = current;
+        }
+
+        private void DepowerAllComponents()
+        {
+            if (grid == null) return;
+
+            poweredComponents.Clear();
+            componentVoltage.Clear();
+            componentCurrent.Clear();
+
+            foreach (var component in EnumerateComponents())
+            {
+                component?.SetPowered(false);
+            }
+        }
+
+        private void DepowerUnvisitedComponents()
+        {
+            foreach (var component in EnumerateComponents())
+            {
+                if (component == null) continue;
+                if (poweredComponents.Contains(component)) continue;
+
+                component.SetPowered(false);
+            }
+        }
+
+        private void DepowerAllWires()
+        {
+            if (grid == null) return;
+
+            poweredWires.Clear();
+            wireVoltage.Clear();
+            wireCurrent.Clear();
+            completedCircuitWires.Clear();
+
+            var wires = CollectPowerWires();
+            foreach (var wire in wires)
+            {
                 if (wire == null) continue;
+                wire.voltage = 0f;
+                wire.current = 0f;
+                wire.SetCircuitPowered(false);
+            }
+        }
 
-                foreach (var cell in wire.occupiedCells)
+        private IEnumerable<MachineComponent> EnumerateComponents()
+        {
+            if (grid == null) yield break;
+
+            var seen = new HashSet<MachineComponent>();
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
                 {
-                    if (!grid.InBounds(cell.x, cell.y)) continue;
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    if (cell.component == null) continue;
 
-                    int idx = grid.ToIndex(cell);
-                    voltageGraph[idx] = Mathf.Max(voltageGraph[idx], entry.voltage);
-                    currentGraph[idx] = Mathf.Max(currentGraph[idx], entry.current);
-                }
-
-                if (wire.startComponent != null && grid.InBounds(wire.startComponent.anchorCell.x, wire.startComponent.anchorCell.y))
-                {
-                    int startIdx = grid.ToIndex(wire.startComponent.anchorCell);
-                    voltageGraph[startIdx] = Mathf.Max(voltageGraph[startIdx], entry.voltage);
-                    currentGraph[startIdx] = Mathf.Max(currentGraph[startIdx], entry.current);
-                }
-
-                if (wire.endComponent != null && grid.InBounds(wire.endComponent.anchorCell.x, wire.endComponent.anchorCell.y))
-                {
-                    int endIdx = grid.ToIndex(wire.endComponent.anchorCell);
-                    voltageGraph[endIdx] = Mathf.Max(voltageGraph[endIdx], entry.voltage);
-                    currentGraph[endIdx] = Mathf.Max(currentGraph[endIdx], entry.current);
+                    if (seen.Add(cell.component))
+                    {
+                        yield return cell.component;
+                    }
                 }
             }
         }
 
-        private void UpdatePoweredCircuitWires(IEnumerable<(PlacedWire wire, float voltage, float current)> poweredWires)
+        private void UpdatePoweredCircuitWires(IEnumerable<PlacedWire> poweredWires)
         {
             completedCircuitWires.Clear();
 
             foreach (var entry in poweredWires)
             {
-                if (entry.wire == null) continue;
-                completedCircuitWires.Add(entry.wire);
+                if (entry == null) continue;
+                completedCircuitWires.Add(entry);
             }
 
             ApplyWireBloom(completedCircuitWires, powerOn);
@@ -674,45 +704,47 @@ namespace MachineRepair
 
         private void EvaluateSignalStates()
         {
-            if (signalGraph == null || voltageGraph == null) return;
+            if (signalGraph == null || grid == null) return;
 
-            for (int i = 0; i < signalGraph.Length; i++)
+            System.Array.Clear(signalGraph, 0, signalGraph.Length);
+
+            foreach (var component in poweredComponents)
             {
-                signalGraph[i] = voltageGraph[i] > 0.01f;
-            }
-        }
+                if (component == null) continue;
+                Vector2Int anchor = component.anchorCell;
+                if (!grid.InBounds(anchor.x, anchor.y)) continue;
 
-        private void UpdateComponentBehaviors()
-        {
-            if (grid == null || voltageGraph == null) return;
-
-            for (int y = 0; y < grid.height; y++)
-            {
-                for (int x = 0; x < grid.width; x++)
+                int idx = grid.ToIndex(anchor);
+                if (idx >= 0 && idx < signalGraph.Length)
                 {
-                    var cell = grid.GetCell(new Vector2Int(x, y));
-                    if (cell.component == null || cell.component.def == null) continue;
+                    signalGraph[idx] = true;
+                }
+            }
 
-                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
-                    int idx = grid.ToIndex(cell.component.anchorCell);
+            foreach (var wire in poweredWires)
+            {
+                if (wire == null) continue;
 
-                    // For now, mirror propagated electrical values into any wires located in the same cell.
-                    if (cell.HasWire)
+                foreach (var cell in wire.occupiedCells)
+                {
+                    if (!grid.InBounds(cell.x, cell.y)) continue;
+                    int idx = grid.ToIndex(cell);
+                    if (idx >= 0 && idx < signalGraph.Length)
                     {
-                        foreach (var wire in cell.Wires)
-                        {
-                            if (wire == null) continue;
-                            wire.voltage = voltageGraph[idx];
-                            wire.current = currentGraph[idx];
-                        }
+                        signalGraph[idx] = true;
                     }
                 }
             }
         }
 
+        private void UpdateComponentBehaviors()
+        {
+            // Intentionally left minimal until component-specific behavior is defined.
+        }
+
         private void DetectFaults()
         {
-            if (grid == null || voltageGraph == null) return;
+            if (grid == null) return;
 
             faultLog.Clear();
 
@@ -730,7 +762,7 @@ namespace MachineRepair
                         {
                             faultLog.Add($"{cell.component.def.displayName} missing return path at {cell.component.anchorCell}");
                         }
-                        else if (cell.component.def.requiresPower && voltageGraph[idx] <= 0f)
+                        else if (cell.component.def.requiresPower && !cell.component.IsPowered)
                         {
                             faultLog.Add($"{cell.component.def.displayName} lacks power at {cell.component.anchorCell}");
                         }
@@ -754,18 +786,21 @@ namespace MachineRepair
 
         private void EmitSimulationSnapshot()
         {
-            if (voltageGraph == null || currentGraph == null || pressureGraph == null || flowGraph == null || signalGraph == null)
+            if (grid == null || pressureGraph == null || flowGraph == null || signalGraph == null)
             {
                 return;
             }
 
             simulationStepCount++;
 
+            var voltageSnapshot = BuildVoltageSnapshot();
+            var currentSnapshot = BuildCurrentSnapshot();
+
             LastSnapshot = new SimulationSnapshot
             {
                 StepIndex = simulationStepCount,
-                Voltage = (float[])voltageGraph.Clone(),
-                Current = (float[])currentGraph.Clone(),
+                Voltage = voltageSnapshot,
+                Current = currentSnapshot,
                 Pressure = (float[])pressureGraph.Clone(),
                 Flow = (float[])flowGraph.Clone(),
                 Signals = (bool[])signalGraph.Clone(),
@@ -773,6 +808,68 @@ namespace MachineRepair
             };
 
             SimulationStepCompleted?.Invoke();
+        }
+
+        private float[] BuildVoltageSnapshot()
+        {
+            var voltage = new float[grid.CellCount];
+
+            foreach (var kvp in componentVoltage)
+            {
+                var component = kvp.Key;
+                if (component == null) continue;
+                Vector2Int anchor = component.anchorCell;
+                if (!grid.InBounds(anchor.x, anchor.y)) continue;
+
+                int idx = grid.ToIndex(anchor);
+                voltage[idx] = Mathf.Max(voltage[idx], kvp.Value);
+            }
+
+            foreach (var kvp in wireVoltage)
+            {
+                var wire = kvp.Key;
+                if (wire == null) continue;
+
+                foreach (var cell in wire.occupiedCells)
+                {
+                    if (!grid.InBounds(cell.x, cell.y)) continue;
+                    int idx = grid.ToIndex(cell);
+                    voltage[idx] = Mathf.Max(voltage[idx], kvp.Value);
+                }
+            }
+
+            return voltage;
+        }
+
+        private float[] BuildCurrentSnapshot()
+        {
+            var current = new float[grid.CellCount];
+
+            foreach (var kvp in componentCurrent)
+            {
+                var component = kvp.Key;
+                if (component == null) continue;
+                Vector2Int anchor = component.anchorCell;
+                if (!grid.InBounds(anchor.x, anchor.y)) continue;
+
+                int idx = grid.ToIndex(anchor);
+                current[idx] = Mathf.Max(current[idx], kvp.Value);
+            }
+
+            foreach (var kvp in wireCurrent)
+            {
+                var wire = kvp.Key;
+                if (wire == null) continue;
+
+                foreach (var cell in wire.occupiedCells)
+                {
+                    if (!grid.InBounds(cell.x, cell.y)) continue;
+                    int idx = grid.ToIndex(cell);
+                    current[idx] = Mathf.Max(current[idx], kvp.Value);
+                }
+            }
+
+            return current;
         }
 
         private void CollectWaterPorts(HashSet<Vector2Int> waterPorts)
