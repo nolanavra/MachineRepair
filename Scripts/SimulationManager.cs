@@ -31,6 +31,7 @@ namespace MachineRepair
         [SerializeField] private bool logWaterFlowPaths = false;
 
         private float stepTimer;
+        private int simulationStepCount;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
         private float[] voltageGraph;
@@ -64,6 +65,7 @@ namespace MachineRepair
         public bool PowerOn => powerOn;
         public bool WaterOn => waterOn;
         public bool SimulationRunning => simulationRunning;
+        public int SimulationStepCount => simulationStepCount;
 
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
@@ -695,8 +697,11 @@ namespace MachineRepair
                 return;
             }
 
+            simulationStepCount++;
+
             LastSnapshot = new SimulationSnapshot
             {
+                StepIndex = simulationStepCount,
                 Voltage = (float[])voltageGraph.Clone(),
                 Current = (float[])currentGraph.Clone(),
                 Pressure = (float[])pressureGraph.Clone(),
@@ -844,6 +849,7 @@ namespace MachineRepair
 
         public struct SimulationSnapshot
         {
+            public int StepIndex;
             public float[] Voltage;
             public float[] Current;
             public float[] Pressure;
