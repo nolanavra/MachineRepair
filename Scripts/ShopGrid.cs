@@ -670,7 +670,7 @@ namespace MachineRepair.Grid
             SetPlacementPreviewActive(true);
         }
 
-        private void SetPlacementHighlightsActive(bool active)
+        public void SetPlacementHighlightsActive(bool active)
         {
             for (int i = 0; i < placementHighlights.Count; i++)
                 placementHighlights[i].gameObject.SetActive(active);
