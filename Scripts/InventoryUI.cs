@@ -17,7 +17,7 @@ public class SimpleInventoryUI : MonoBehaviour
     [Header("Inventory Source")]
     public Inventory inventory;
     public GameObject inventoryPanel;
-    [SerializeField] private InputRouter inputRouter;
+    [SerializeField] private GridManager grid;
 
     [Header("Input")]
     [SerializeField] private PlayerInput playerInput;
@@ -45,7 +45,7 @@ public class SimpleInventoryUI : MonoBehaviour
 
     private void Start()
     {
-        if (inputRouter == null) inputRouter = FindFirstObjectByType<InputRouter>();
+        if (grid == null) grid = FindFirstObjectByType<GridManager>();
         if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
         CacheInputActions();
         EnableInput();
@@ -133,13 +133,9 @@ public class SimpleInventoryUI : MonoBehaviour
         var slotData = slots[slotIndex];
         if (slotData.IsEmpty) return;
 
-        if (!inventory.ConsumeFromSlot(slotIndex, out var itemId)) return;
-
-        bool placementStarted = inputRouter != null && inputRouter.BeginComponentPlacement(itemId, removeFromInventory: false);
-        if (!placementStarted)
-        {
-            inventory.AddItem(itemId, 1);
-        }
+        string itemId = slotData.id;
+        bool placementStarted = grid != null && grid.TryStartPlacement(itemId);
+        if (!placementStarted) return;
 
         RefreshUI();
     }
