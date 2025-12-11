@@ -986,6 +986,36 @@ namespace MachineRepair.Grid
             return true;
         }
 
+        public bool TryDeleteSelection(InputRouter.SelectionInfo selection)
+        {
+            if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+            if (inventory == null) return false;
+            if (!selection.hasSelection) return false;
+
+            switch (selection.target)
+            {
+                case InputRouter.CellSelectionTarget.Component:
+                    return TryDeleteComponent(selection.cellData.component);
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryDeleteComponent(MachineComponent component)
+        {
+            if (component == null) return false;
+            if (!RemoveComponent(component)) return false;
+
+            ReturnComponentToInventory(component);
+            return true;
+        }
+
+        private void ReturnComponentToInventory(MachineComponent component)
+        {
+            if (component?.def == null || inventory == null) return;
+            inventory.AddItem(component.def.defName, 1);
+        }
+
         public bool AddWireRun(IEnumerable<Vector2Int> cells, PlacedWire wire)
         {
             if (cells == null || wire == null) return false;

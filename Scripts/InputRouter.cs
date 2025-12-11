@@ -36,7 +36,6 @@ namespace MachineRepair.Grid
         [Tooltip("Auto-found at runtime if left unassigned.")]
         [SerializeField] private PlayerInput playerInput;
         [SerializeField] private GridManager grid;
-        [SerializeField] private Inventory inventory;
         [SerializeField] private WirePlacementTool wireTool;
         [SerializeField] private PipePlacementTool pipeTool;
         private Camera cam;
@@ -109,7 +108,6 @@ namespace MachineRepair.Grid
             if (playerInput == null) playerInput = FindFirstObjectByType<PlayerInput>();
             cam = Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
-            if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
             if (wireTool == null) wireTool = FindFirstObjectByType<WirePlacementTool>();
             if (pipeTool == null) pipeTool = FindFirstObjectByType<PipePlacementTool>();
             if (wireTool == null)
@@ -441,27 +439,6 @@ namespace MachineRepair.Grid
             SelectionChanged?.Invoke(CurrentSelection);
         }
 
-        private void RemoveSelectedComponentFromGrid()
-        {
-            if (grid == null || inventory == null) return;
-            if (!CurrentSelection.hasSelection || CurrentSelection.target != CellSelectionTarget.Component) return;
-
-            MachineComponent component = CurrentSelection.cellData.component;
-            if (component == null) return;
-
-            bool removed = grid.RemoveComponent(component);
-            if (!removed) return;
-
-            ReturnComponentToInventory(component);
-            ClearSelection();
-        }
-
-        private void ReturnComponentToInventory(MachineComponent component)
-        {
-            if (component?.def == null || inventory == null) return;
-            inventory.AddItem(component.def.defName, 1);
-        }
-
         // ----------------- Mouse helpers -----------------
 
         // Returns mouse position on grid
@@ -738,7 +715,10 @@ namespace MachineRepair.Grid
         private void OnDeleteSelectionPerformed(InputAction.CallbackContext ctx)
         {
             if (!ctx.performed) return;
-            RemoveSelectedComponentFromGrid();
+            if (grid != null && grid.TryDeleteSelection(CurrentSelection))
+            {
+                ClearSelection();
+            }
             LogInputEvent("Delete selection input");
         }
 
