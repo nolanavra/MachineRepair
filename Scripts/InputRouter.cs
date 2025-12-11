@@ -505,7 +505,7 @@ namespace MachineRepair.Grid
             if (!highlightEnable)
             {
                 if (highlightObject != null) highlightObject.SetActive(false);
-                SetFootprintHighlightsActive(false);
+                grid?.SetPlacementHighlightsActive(false);
                 return;
             }
 
@@ -570,8 +570,6 @@ namespace MachineRepair.Grid
                 wireTool?.CancelPreview();
             }
         }
-
-        #endregion
 
         #region Input Actions
         private void CacheInputActions()
