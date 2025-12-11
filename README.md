@@ -11,6 +11,7 @@ This repository contains a Unity 2D prototype for wiring up an espresso-machine 
   - `RotatePlacement` (Button or Value)
   - `ModeSelection`, `ModeComponentPlacement`, `ModeWirePlacement`, `ModePipePlacement`, `ModeSimulation` (Buttons)
   - `ToggleInventory` (Button)
+  - `ToggleDebugUI` (Button)
 - At least one Tilemap that represents the playable grid; tiles named `normalCell`, `connectorCell`, and `displayCell` gate placement permissions.
 
 ## Scene wiring (top-level objects)

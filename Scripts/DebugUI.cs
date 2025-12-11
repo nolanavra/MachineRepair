@@ -2,6 +2,7 @@ using MachineRepair;
 using MachineRepair.Grid;
 using TMPro;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace MachineRepair.Grid {
 
@@ -11,23 +12,43 @@ namespace MachineRepair.Grid {
         [SerializeField] private GridManager grid;
         [SerializeField] private InputRouter router;
         [SerializeField] private GameModeManager gameModeManager;
+        [Header("Panel")]
+        [SerializeField] private GameObject debugPanel;
+        [SerializeField] private bool panelVisible = true;
+        [Header("Input")]
+        [SerializeField] private PlayerInput playerInput;
+        [SerializeField] private string gameplayMapName = "Gameplay";
+        [SerializeField] private string toggleDebugActionName = "ToggleDebugUI";
         [SerializeField] private TextMeshProUGUI cellText;
         [SerializeField] private TextMeshProUGUI cellOccupancy;
         [SerializeField] private TextMeshProUGUI gameMode;
         [Header("Simulation")]
         [SerializeField] private SimulationManager simulationManager;
         [SerializeField] private TextMeshProUGUI waterConditions;
+        [SerializeField] private TextMeshProUGUI simulationStepLabel;
+
+        private InputAction toggleDebugAction;
+        private CanvasGroup panelCanvasGroup;
 
         private void OnEnable()
         {
             if (GameModeManager.Instance != null)
                 GameModeManager.Instance.RegisterListener(this);
+
+            SubscribeSimulationEvents();
+            CacheInputActions();
+            EnableInput();
+            ApplyPanelVisibility();
+            UpdateSimulationStepLabel();
         }
 
         private void OnDisable()
         {
             if (GameModeManager.Instance != null)
                 GameModeManager.Instance.UnregisterListener(this);
+
+            UnsubscribeSimulationEvents();
+            DisableInput();
         }
 
         void Awake()
@@ -40,6 +61,11 @@ namespace MachineRepair.Grid {
             if (simulationManager == null)
             {
                 simulationManager = Object.FindFirstObjectByType<SimulationManager>();
+            }
+
+            if (debugPanel == null)
+            {
+                debugPanel = gameObject;
             }
         }
 
@@ -67,7 +93,7 @@ namespace MachineRepair.Grid {
                 cellOccupancy.text = $"---";
                 if (waterConditions != null) waterConditions.text = "Water: ---";
             }
-            
+
         }
 
         // -------------- IGameModeListener ----------------
@@ -109,6 +135,106 @@ namespace MachineRepair.Grid {
             string runState = simulationManager.SimulationRunning ? "Running" : "Paused";
 
             waterConditions.text = $"Water: {state} ({runState})\nPressure: {pressure:0.###} | Flow: {flow:0.###}";
+        }
+
+        private void SubscribeSimulationEvents()
+        {
+            if (simulationManager == null) return;
+
+            simulationManager.SimulationStepCompleted += OnSimulationStepCompleted;
+        }
+
+        private void UnsubscribeSimulationEvents()
+        {
+            if (simulationManager == null) return;
+
+            simulationManager.SimulationStepCompleted -= OnSimulationStepCompleted;
+        }
+
+        private void OnSimulationStepCompleted()
+        {
+            UpdateSimulationStepLabel();
+        }
+
+        private void UpdateSimulationStepLabel()
+        {
+            if (simulationStepLabel == null)
+            {
+                return;
+            }
+
+            if (simulationManager != null && simulationManager.LastSnapshot.HasValue)
+            {
+                simulationStepLabel.text = $"Simulation Steps: {simulationManager.LastSnapshot.Value.StepIndex}";
+            }
+            else if (simulationManager != null)
+            {
+                simulationStepLabel.text = $"Simulation Steps: {simulationManager.SimulationStepCount}";
+            }
+            else
+            {
+                simulationStepLabel.text = "Simulation Steps: ---";
+            }
+        }
+
+        private void CacheInputActions()
+        {
+            if (playerInput == null)
+            {
+                playerInput = Object.FindFirstObjectByType<PlayerInput>();
+            }
+
+            if (playerInput == null || playerInput.actions == null) return;
+
+            var map = playerInput.actions.FindActionMap(gameplayMapName, throwIfNotFound: false);
+            if (map == null) return;
+
+            toggleDebugAction = map.FindAction(toggleDebugActionName, throwIfNotFound: false);
+        }
+
+        private void EnableInput()
+        {
+            if (toggleDebugAction == null) return;
+
+            toggleDebugAction.performed += OnToggleDebugAction;
+            toggleDebugAction.Enable();
+        }
+
+        private void DisableInput()
+        {
+            if (toggleDebugAction == null) return;
+
+            toggleDebugAction.performed -= OnToggleDebugAction;
+            toggleDebugAction.Disable();
+        }
+
+        private void OnToggleDebugAction(InputAction.CallbackContext ctx)
+        {
+            if (!ctx.performed) return;
+
+            panelVisible = !panelVisible;
+            ApplyPanelVisibility();
+        }
+
+        private void ApplyPanelVisibility()
+        {
+            if (debugPanel == null)
+            {
+                return;
+            }
+
+            if (panelCanvasGroup == null)
+            {
+                panelCanvasGroup = debugPanel.GetComponent<CanvasGroup>();
+                if (panelCanvasGroup == null)
+                {
+                    panelCanvasGroup = debugPanel.AddComponent<CanvasGroup>();
+                }
+            }
+
+            panelCanvasGroup.alpha = panelVisible ? 1f : 0f;
+            panelCanvasGroup.interactable = panelVisible;
+            panelCanvasGroup.blocksRaycasts = panelVisible;
         }
     }
 }
