@@ -207,7 +207,7 @@ namespace MachineRepair.Grid
                 if (!IsFootprintPlaceable(footprintCells)) continue;
 
                 var component = CreateComponentInstance(def, gridCell);
-                if (TryPlaceComponentFootprint(component, footprintCells.OccupiedCells))
+                if (TryPlaceComponentFootprint(component, footprintCells))
                 {
                     ApplyPortMarkers(component);
                     ApplyDisplaySprites(component, footprintCells.DisplayCells);
@@ -215,13 +215,30 @@ namespace MachineRepair.Grid
             }
         }
 
-        private bool TryPlaceComponentFootprint(MachineComponent component, IReadOnlyList<Vector2Int> cells)
+        private bool TryPlaceComponentFootprint(MachineComponent component, FootprintCells cells)
         {
-            if (component == null || cells == null || cells.Count == 0) return false;
+            if (component == null) return false;
 
-            for (int i = 0; i < cells.Count; i++)
+            var placementCells = cells.OccupiedCells;
+            bool usingDisplayCells = placementCells == null || placementCells.Count == 0;
+
+            HashSet<Vector2Int> displayCellSet = null;
+            if (cells.DisplayCells != null && cells.DisplayCells.Count > 0)
             {
-                if (!TryPlaceComponent(cells[i], component, markTerrainConnectorsOnly: true))
+                displayCellSet = new HashSet<Vector2Int>(cells.DisplayCells);
+                if (usingDisplayCells) placementCells = cells.DisplayCells;
+            }
+
+            if (placementCells == null || placementCells.Count == 0) return false;
+
+            bool markTerrainConnectorsOnly = !usingDisplayCells;
+            for (int i = 0; i < placementCells.Count; i++)
+            {
+                var cell = placementCells[i];
+                bool isDisplayCell = displayCellSet != null && displayCellSet.Contains(cell);
+                bool markConnectorsOnly = markTerrainConnectorsOnly && !isDisplayCell;
+
+                if (!TryPlaceComponent(cell, component, markConnectorsOnly, allowDisplayCell: isDisplayCell))
                 {
                     return false;
                 }
@@ -529,7 +546,7 @@ namespace MachineRepair.Grid
             MachineComponent machine = CreateComponentInstance(currentPlacementDef, anchorCell, currentPlacementRotation, center);
             if (machine == null) return false;
 
-            if (!TryPlaceComponentFootprint(machine, cells.OccupiedCells))
+            if (!TryPlaceComponentFootprint(machine, cells))
             {
                 if (Application.isPlaying)
                     Destroy(machine.gameObject);
@@ -918,12 +935,16 @@ namespace MachineRepair.Grid
             return true;
         }
 
-        public bool TryPlaceComponent(Vector2Int c, MachineComponent component, bool markTerrainConnectorsOnly = false)
+        public bool TryPlaceComponent(Vector2Int c, MachineComponent component, bool markTerrainConnectorsOnly = false, bool allowDisplayCell = false)
         {
             if (!InBounds(c.x, c.y)) return false;
             int i = ToIndex(c);
             var placeability = terrainByIndex[i].placeability;
-            if (placeability == CellPlaceability.Blocked || placeability == CellPlaceability.ConnectorsOnly || placeability == CellPlaceability.Display) return false;
+            bool isDisplayCell = placeability == CellPlaceability.Display;
+            if (placeability == CellPlaceability.Blocked
+                || placeability == CellPlaceability.ConnectorsOnly
+                || (isDisplayCell && !allowDisplayCell))
+                return false;
 
             var occupancy = occupancyByIndex[i];
             if (occupancy.HasComponent) return false;
@@ -931,7 +952,7 @@ namespace MachineRepair.Grid
             occupancy.component = component;
             occupancyByIndex[i] = occupancy;
 
-            if (markTerrainConnectorsOnly)
+            if (markTerrainConnectorsOnly && !isDisplayCell)
             {
                 UpdateCellPlaceability(i, CellPlaceability.ConnectorsOnly);
             }
@@ -957,13 +978,25 @@ namespace MachineRepair.Grid
             if (component == null) return false;
 
             var footprintCells = GetFootprintCells(component);
-            var occupiedCells = footprintCells.OccupiedCells;
-            if (occupiedCells == null || occupiedCells.Count == 0) return false;
+            var placementCells = footprintCells.OccupiedCells;
+            if (placementCells == null || placementCells.Count == 0)
+            {
+                placementCells = footprintCells.DisplayCells;
+            }
+
+            if (placementCells == null || placementCells.Count == 0) return false;
+
+            HashSet<Vector2Int> seen = null;
+            if (placementCells.Count > 1)
+            {
+                seen = new HashSet<Vector2Int>();
+            }
 
             bool removedAny = false;
-            for (int i = 0; i < occupiedCells.Count; i++)
+            for (int i = 0; i < placementCells.Count; i++)
             {
-                var cell = occupiedCells[i];
+                var cell = placementCells[i];
+                if (seen != null && !seen.Add(cell)) continue;
                 if (!InBounds(cell.x, cell.y)) continue;
 
                 int idx = ToIndex(cell);
