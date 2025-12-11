@@ -123,6 +123,7 @@ namespace MachineRepair
 
             BuildGraphs();
             PropagateVoltageCurrent();
+            UpdateComponentPowerStates();
             PropagatePressureFlow();
             EvaluateSignalStates();
             UpdateComponentBehaviors();
@@ -234,6 +235,67 @@ namespace MachineRepair
 
             ApplyPowerToGraph(poweredNodes, poweredWires, portByCell);
             UpdatePoweredCircuitWires(poweredWires);
+        }
+
+        private void UpdateComponentPowerStates()
+        {
+            if (grid == null || voltageGraph == null) return;
+
+            var processed = new HashSet<MachineComponent>();
+
+            for (int y = 0; y < grid.height; y++)
+            {
+                for (int x = 0; x < grid.width; x++)
+                {
+                    var cell = grid.GetCell(new Vector2Int(x, y));
+                    var component = cell.component;
+                    if (component == null) continue;
+                    if (!processed.Add(component)) continue;
+
+                    bool powered = IsComponentInPoweredCircuit(component);
+                    component.SetPowered(powered);
+                }
+            }
+        }
+
+        private bool IsComponentInPoweredCircuit(MachineComponent component)
+        {
+            if (!powerOn || grid == null || voltageGraph == null || component == null) return false;
+
+            bool hasPowerPort = false;
+
+            if (component.portDef?.ports != null)
+            {
+                for (int i = 0; i < component.portDef.ports.Length; i++)
+                {
+                    var port = component.portDef.ports[i];
+                    if (port.port != PortType.Power) continue;
+
+                    hasPowerPort = true;
+                    Vector2Int cell = component.GetGlobalCell(port);
+                    if (!grid.InBounds(cell.x, cell.y)) continue;
+
+                    int idx = grid.ToIndex(cell);
+                    if (voltageGraph[idx] > 0f)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (!hasPowerPort) return false;
+
+            Vector2Int anchor = component.anchorCell;
+            if (grid.InBounds(anchor.x, anchor.y))
+            {
+                int anchorIdx = grid.ToIndex(anchor);
+                if (voltageGraph[anchorIdx] > 0f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void CollectPowerPorts(
