@@ -52,6 +52,7 @@ namespace MachineRepair
         private readonly Dictionary<MachineComponent, float> componentCurrent = new();
         private readonly Dictionary<PlacedWire, float> wireVoltage = new();
         private readonly Dictionary<PlacedWire, float> wireCurrent = new();
+        private readonly List<List<Vector2Int>> poweredLoops = new();
 
         private static readonly Vector2Int[] WaterPropagationOffsets =
         {
@@ -197,6 +198,7 @@ namespace MachineRepair
         {
             if (grid == null) return;
 
+            poweredLoops.Clear();
             if (!powerOn)
             {
                 DepowerAllComponents();
@@ -210,7 +212,8 @@ namespace MachineRepair
             CollectPowerPorts(portByCell, chassisPorts);
 
             var wires = CollectPowerWires();
-            var adjacency = BuildPowerAdjacency(wires, portByCell);
+            var powerGraph = BuildPowerGraph(wires, portByCell);
+            var loops = BuildChassisLoops(chassisPorts, powerGraph.Adjacency);
 
             poweredComponents.Clear();
             poweredWires.Clear();
@@ -219,23 +222,7 @@ namespace MachineRepair
             wireVoltage.Clear();
             wireCurrent.Clear();
 
-            foreach (var chassisPort in chassisPorts)
-            {
-                if (!grid.InBounds(chassisPort.Cell.x, chassisPort.Cell.y)) continue;
-
-                var visited = new HashSet<Vector2Int>();
-                TraversePowerGraph(chassisPort.Cell, adjacency, visited);
-
-                bool hasReturnPort = HasReturnChassisPort(visited, portByCell, chassisPort.Cell);
-
-                if (!hasReturnPort)
-                {
-                    MarkMissingReturnComponents(visited, portByCell);
-                    continue;
-                }
-
-                BuildCircuitFromVisited(visited, portByCell, wires, chassisPort.Voltage, chassisPort.Current);
-            }
+            ApplyPoweredLoops(loops, portByCell, powerGraph.WireByEdge);
 
             UpdatePoweredCircuitWires(poweredWires);
             DepowerUnvisitedComponents();
@@ -316,18 +303,21 @@ namespace MachineRepair
             return wires;
         }
 
-        private Dictionary<Vector2Int, List<Vector2Int>> BuildPowerAdjacency(
+        private PowerGraph BuildPowerGraph(
             IEnumerable<PlacedWire> wires,
             Dictionary<Vector2Int, PowerPort> portByCell)
         {
-            var adjacency = new Dictionary<Vector2Int, List<Vector2Int>>();
+            var graph = new PowerGraph
+            {
+                Adjacency = new Dictionary<Vector2Int, List<Vector2Int>>(),
+                WireByEdge = new Dictionary<(Vector2Int, Vector2Int), PlacedWire>()
+            };
 
             foreach (var wire in wires)
             {
                 if (wire == null) continue;
 
-                AddDirectionalNeighbor(wire.startPortCell, wire.endPortCell);
-                AddDirectionalNeighbor(wire.endPortCell, wire.startPortCell);
+                AddWireEdge(wire.startPortCell, wire.endPortCell, wire);
             }
 
             var portsByComponent = new Dictionary<MachineComponent, List<PowerPort>>();
@@ -365,38 +355,38 @@ namespace MachineRepair
                 {
                     foreach (var output in outputs)
                     {
-                        if (input.Cell == output.Cell) continue;
-
-                        AddNeighbor(input.Cell, output.Cell);
+                        AddDirectionalEdge(input.Cell, output.Cell);
+                        AddDirectionalEdge(output.Cell, input.Cell);
                     }
                 }
             }
 
-            return adjacency;
-
-            void AddDirectionalNeighbor(Vector2Int from, Vector2Int to)
+            foreach (var port in portByCell.Keys)
             {
-                if (!grid.InBounds(from.x, from.y) || !grid.InBounds(to.x, to.y)) return;
-
-                bool canExit = true;
-                if (portByCell.TryGetValue(from, out var fromPort))
+                if (!graph.Adjacency.ContainsKey(port))
                 {
-                    canExit = !fromPort.IsInput;
+                    graph.Adjacency[port] = new List<Vector2Int>();
                 }
-
-                if (!canExit) return;
-
-                AddNeighbor(from, to);
             }
 
-            void AddNeighbor(Vector2Int a, Vector2Int b)
+            return graph;
+
+            void AddWireEdge(Vector2Int a, Vector2Int b, PlacedWire wire)
+            {
+                AddDirectionalEdge(a, b);
+                AddDirectionalEdge(b, a);
+                graph.WireByEdge[(a, b)] = wire;
+                graph.WireByEdge[(b, a)] = wire;
+            }
+
+            void AddDirectionalEdge(Vector2Int a, Vector2Int b)
             {
                 if (!grid.InBounds(a.x, a.y) || !grid.InBounds(b.x, b.y)) return;
 
-                if (!adjacency.TryGetValue(a, out var list))
+                if (!graph.Adjacency.TryGetValue(a, out var list))
                 {
                     list = new List<Vector2Int>();
-                    adjacency[a] = list;
+                    graph.Adjacency[a] = list;
                 }
 
                 if (!list.Contains(b))
@@ -406,152 +396,150 @@ namespace MachineRepair
             }
         }
 
-        private void TraversePowerGraph(Vector2Int start, Dictionary<Vector2Int, List<Vector2Int>> adjacency, HashSet<Vector2Int> visited)
+        private List<List<Vector2Int>> BuildChassisLoops(
+            IReadOnlyList<PowerPort> chassisPorts,
+            Dictionary<Vector2Int, List<Vector2Int>> adjacency)
         {
-            visited.Clear();
-            var queue = new Queue<Vector2Int>();
+            var loops = new List<List<Vector2Int>>();
 
-            if (!grid.InBounds(start.x, start.y)) return;
-
-            visited.Add(start);
-            queue.Enqueue(start);
-
-            while (queue.Count > 0)
+            for (int i = 0; i < chassisPorts.Count; i++)
             {
-                var node = queue.Dequeue();
-                if (!adjacency.TryGetValue(node, out var neighbors)) continue;
-
-                for (int i = 0; i < neighbors.Count; i++)
+                for (int j = i + 1; j < chassisPorts.Count; j++)
                 {
-                    var next = neighbors[i];
-                    if (visited.Add(next))
+                    EnumerateSimplePaths(chassisPorts[i].Cell, chassisPorts[j].Cell, adjacency, loops);
+                }
+            }
+
+            return loops;
+        }
+
+        private void EnumerateSimplePaths(
+            Vector2Int start,
+            Vector2Int end,
+            Dictionary<Vector2Int, List<Vector2Int>> adjacency,
+            List<List<Vector2Int>> results)
+        {
+            if (!grid.InBounds(start.x, start.y) || !grid.InBounds(end.x, end.y)) return;
+
+            var path = new List<Vector2Int>();
+            var visited = new HashSet<Vector2Int>();
+
+            void Dfs(Vector2Int node)
+            {
+                path.Add(node);
+                visited.Add(node);
+
+                if (node == end)
+                {
+                    results.Add(new List<Vector2Int>(path));
+                }
+                else if (adjacency.TryGetValue(node, out var neighbors))
+                {
+                    for (int i = 0; i < neighbors.Count; i++)
                     {
-                        queue.Enqueue(next);
+                        var next = neighbors[i];
+                        if (visited.Contains(next)) continue;
+                        Dfs(next);
                     }
                 }
+
+                visited.Remove(node);
+                path.RemoveAt(path.Count - 1);
             }
+
+            Dfs(start);
         }
 
-        private bool HasReturnChassisPort(
-            IEnumerable<Vector2Int> visited,
+        private void ApplyPoweredLoops(
+            IEnumerable<List<Vector2Int>> loops,
             Dictionary<Vector2Int, PowerPort> portByCell,
-            Vector2Int startPortCell)
+            Dictionary<(Vector2Int, Vector2Int), PlacedWire> wireByEdge)
         {
-            foreach (var node in visited)
+            foreach (var loop in loops)
             {
-                if (node == startPortCell) continue;
+                if (loop == null || loop.Count < 2) continue;
 
-                if (!portByCell.TryGetValue(node, out var port)) continue;
-                if (port.Component == null || port.Component.def == null) continue;
+                float loopVoltage = 0f;
+                float loopCurrent = 0f;
+                var componentPorts = new Dictionary<MachineComponent, ComponentPortState>();
 
-                bool isChassis = port.Component.def.type == ComponentType.ChassisPowerConnection;
-
-                if (isChassis)
+                foreach (var node in loop)
                 {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private void MarkMissingReturnComponents(IEnumerable<Vector2Int> visited, Dictionary<Vector2Int, PowerPort> portByCell)
-        {
-            foreach (var node in visited)
-            {
-                if (!portByCell.TryGetValue(node, out var port)) continue;
-
-                if (port.Component != null && port.Component.def != null && port.Component.def.requiresPower)
-                {
-                    componentsMissingReturn.Add(port.Component);
-                }
-            }
-        }
-
-        private void BuildCircuitFromVisited(
-            IEnumerable<Vector2Int> visited,
-            Dictionary<Vector2Int, PowerPort> portByCell,
-            IReadOnlyList<PlacedWire> wires,
-            float voltage,
-            float current)
-        {
-            var circuitComponents = new HashSet<MachineComponent>();
-            var circuitWires = new HashSet<PlacedWire>();
-            var componentPorts = new Dictionary<MachineComponent, List<PowerPort>>();
-
-            foreach (var node in visited)
-            {
-                if (portByCell.TryGetValue(node, out var port) && port.Component != null)
-                {
-                    circuitComponents.Add(port.Component);
-
-                    if (!componentPorts.TryGetValue(port.Component, out var ports))
+                    if (portByCell.TryGetValue(node, out var port))
                     {
-                        ports = new List<PowerPort>();
-                        componentPorts[port.Component] = ports;
-                    }
+                        loopVoltage = Mathf.Max(loopVoltage, port.Voltage);
+                        loopCurrent = Mathf.Max(loopCurrent, port.Current);
 
-                    ports.Add(port);
-                }
-
-                foreach (var wire in wires)
-                {
-                    if (wire == null) continue;
-                    if (!node.Equals(wire.startPortCell) && !node.Equals(wire.endPortCell)) continue;
-
-                    circuitWires.Add(wire);
-                }
-            }
-
-            foreach (var component in circuitComponents)
-            {
-                if (component == null || component.def == null) continue;
-
-                bool hasInbound = false;
-                bool hasOutbound = false;
-                Vector2Int? inboundCell = null;
-                Vector2Int? outboundCell = null;
-
-                if (componentPorts.TryGetValue(component, out var ports))
-                {
-                    foreach (var port in ports)
-                    {
-                        if (port.IsInput)
+                        if (port.Component != null)
                         {
-                            hasInbound = true;
-                            inboundCell ??= port.Cell;
-                        }
-                        else
-                        {
-                            hasOutbound = true;
-                            outboundCell ??= port.Cell;
+                            if (!componentPorts.TryGetValue(port.Component, out var state))
+                            {
+                                state = new ComponentPortState();
+                            }
+
+                            state.Register(port);
+                            componentPorts[port.Component] = state;
                         }
                     }
                 }
 
-                bool hasReturnPath = hasInbound && hasOutbound && inboundCell.HasValue && outboundCell.HasValue && inboundCell.Value != outboundCell.Value;
-
-                if (!hasReturnPath)
+                for (int i = 0; i < loop.Count - 1; i++)
                 {
-                    if (component.def.requiresPower)
-                    {
-                        componentsMissingReturn.Add(component);
-                    }
+                    var a = loop[i];
+                    var b = loop[i + 1];
 
-                    continue;
+                    if (wireByEdge.TryGetValue((a, b), out var wire) || wireByEdge.TryGetValue((b, a), out wire))
+                    {
+                        ApplyWirePower(wire, loopVoltage, loopCurrent);
+                        poweredWires.Add(wire);
+                    }
                 }
 
-                ApplyComponentPower(component, voltage, current);
-            }
+                foreach (var kvp in componentPorts)
+                {
+                    var component = kvp.Key;
+                    var state = kvp.Value;
 
-            foreach (var wire in circuitWires)
-            {
-                ApplyWirePower(wire, voltage, current);
-            }
+                    if (component == null || component.def == null) continue;
 
-            foreach (var wire in circuitWires)
+                    if (!state.HasInbound || !state.HasOutbound)
+                    {
+                        if (component.def.requiresPower)
+                        {
+                            componentsMissingReturn.Add(component);
+                        }
+
+                        continue;
+                    }
+
+                    ApplyComponentPower(component, loopVoltage, loopCurrent);
+                }
+
+                poweredLoops.Add(new List<Vector2Int>(loop));
+            }
+        }
+
+        private struct PowerGraph
+        {
+            public Dictionary<Vector2Int, List<Vector2Int>> Adjacency;
+            public Dictionary<(Vector2Int, Vector2Int), PlacedWire> WireByEdge;
+        }
+
+        private struct ComponentPortState
+        {
+            public bool HasInbound;
+            public bool HasOutbound;
+
+            public void Register(PowerPort port)
             {
-                poweredWires.Add(wire);
+                if (port.IsInput)
+                {
+                    HasInbound = true;
+                }
+                else
+                {
+                    HasOutbound = true;
+                }
             }
         }
 
@@ -631,6 +619,7 @@ namespace MachineRepair
             wireVoltage.Clear();
             wireCurrent.Clear();
             completedCircuitWires.Clear();
+            poweredLoops.Clear();
 
             var wires = CollectPowerWires();
             foreach (var wire in wires)
@@ -922,7 +911,8 @@ namespace MachineRepair
                 Pressure = (float[])pressureGraph.Clone(),
                 Flow = (float[])flowGraph.Clone(),
                 Signals = (bool[])signalGraph.Clone(),
-                Faults = new List<string>(faultLog)
+                Faults = new List<string>(faultLog),
+                PowerLoops = CloneLoops(poweredLoops)
             };
 
             SimulationStepCompleted?.Invoke();
@@ -988,6 +978,24 @@ namespace MachineRepair
             }
 
             return current;
+        }
+
+        private static List<List<Vector2Int>> CloneLoops(IReadOnlyList<List<Vector2Int>> loops)
+        {
+            var copy = new List<List<Vector2Int>>(loops?.Count ?? 0);
+
+            if (loops == null)
+            {
+                return copy;
+            }
+
+            foreach (var loop in loops)
+            {
+                if (loop == null) continue;
+                copy.Add(new List<Vector2Int>(loop));
+            }
+
+            return copy;
         }
 
         private void CollectWaterPorts(HashSet<Vector2Int> waterPorts)
@@ -1133,6 +1141,7 @@ namespace MachineRepair
             public float[] Flow;
             public bool[] Signals;
             public IReadOnlyList<string> Faults;
+            public IReadOnlyList<IReadOnlyList<Vector2Int>> PowerLoops;
         }
 
         private void UpdateChassisPowerAvailability(bool powerEnabled)
