@@ -13,10 +13,12 @@ using UnityEngine.InputSystem;
 using MachineRepair;
 using MachineRepair.Grid;
 using MachineRepair.Input;
+using UnityEngine.Rendering.Universal;
 
 public static class Editor_CreateDefaultScene
 {
     private const string ScenePath = "Assets/Scenes/MachineRepair.unity";
+    private const string WireGlowLayerName = "WireGlow";
 
     [MenuItem("Tools/MachineRepair/Create Default Scene")]
     public static void CreateDefaultScene()
@@ -36,12 +38,12 @@ public static class Editor_CreateDefaultScene
 
         var playerInput = CreatePlayerInputRoot(scene, actions);
 
-        var camera = CreateCamera(scene);
+        var camera = CreateCamera(scene, out _);
         var gridManager = CreateGridRoot(scene);
         var gameModeManager = CreateGameModeManager(scene, playerInput);
         var inventory = CreateInventory(scene);
         var simulationManager = CreateSimulationRoot(scene, gridManager);
-        var toolsRoot = CreateToolsRoot(scene, gridManager, inventory, camera, playerInput);
+        var toolsRoot = CreateToolsRoot(scene, gridManager, inventory, camera, playerInput, WireGlowLayerName);
 
         var canvas = CreateCanvas(scene);
         CreateEventSystem(scene, actions);
@@ -54,6 +56,51 @@ public static class Editor_CreateDefaultScene
         Directory.CreateDirectory(Path.GetDirectoryName(ScenePath)!);
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorSceneManager.MarkSceneDirty(scene);
+    }
+
+    private static int EnsureLayerExists(string layerName)
+    {
+        var tagManagerAsset = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset");
+        if (tagManagerAsset != null && tagManagerAsset.Length > 0)
+        {
+            var serializedObject = new SerializedObject(tagManagerAsset[0]);
+            var layersProp = serializedObject.FindProperty("layers");
+            bool layerFound = false;
+
+            if (layersProp != null)
+            {
+                for (int i = 0; i < layersProp.arraySize; i++)
+                {
+                    var element = layersProp.GetArrayElementAtIndex(i);
+                    if (element != null && element.stringValue == layerName)
+                    {
+                        layerFound = true;
+                        break;
+                    }
+                }
+
+                if (!layerFound)
+                {
+                    for (int i = 8; i < layersProp.arraySize; i++)
+                    {
+                        var element = layersProp.GetArrayElementAtIndex(i);
+                        if (element != null && string.IsNullOrEmpty(element.stringValue))
+                        {
+                            element.stringValue = layerName;
+                            layerFound = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (layerFound)
+            {
+                serializedObject.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        return LayerMask.NameToLayer(layerName);
     }
 
     private static PlayerInput CreatePlayerInputRoot(Scene scene, InputActionAsset actions)
@@ -73,8 +120,10 @@ public static class Editor_CreateDefaultScene
         return playerInput;
     }
 
-    private static Camera CreateCamera(Scene scene)
+    private static Camera CreateCamera(Scene scene, out Camera wireGlowCamera)
     {
+        int wireGlowLayer = EnsureLayerExists(WireGlowLayerName);
+
         var cameraGO = new GameObject("Main Camera");
         SceneManager.MoveGameObjectToScene(cameraGO, scene);
         var camera = cameraGO.AddComponent<Camera>();
@@ -85,7 +134,39 @@ public static class Editor_CreateDefaultScene
         camera.backgroundColor = new Color(0.1f, 0.1f, 0.1f, 1f);
         camera.tag = "MainCamera";
         cameraGO.AddComponent<AudioListener>();
+
+        if (wireGlowLayer >= 0)
+        {
+            camera.cullingMask &= ~(1 << wireGlowLayer);
+        }
+
+        var mainCameraData = cameraGO.AddComponent<UniversalAdditionalCameraData>();
+        mainCameraData.renderType = CameraRenderType.Base;
+
+        wireGlowCamera = CreateWireGlowCamera(scene, camera, mainCameraData, wireGlowLayer);
         return camera;
+    }
+
+    private static Camera CreateWireGlowCamera(Scene scene, Camera mainCamera, UniversalAdditionalCameraData mainCameraData, int wireGlowLayer)
+    {
+        var glowGO = new GameObject("WireGlowCamera");
+        SceneManager.MoveGameObjectToScene(glowGO, scene);
+
+        var glowCamera = glowGO.AddComponent<Camera>();
+        glowCamera.orthographic = mainCamera.orthographic;
+        glowCamera.orthographicSize = mainCamera.orthographicSize;
+        glowCamera.transform.position = mainCamera.transform.position;
+        glowCamera.clearFlags = CameraClearFlags.Depth;
+        glowCamera.cullingMask = wireGlowLayer >= 0 ? 1 << wireGlowLayer : 0;
+        glowCamera.backgroundColor = Color.clear;
+        glowCamera.depth = mainCamera.depth + 1f;
+
+        var glowData = glowGO.AddComponent<UniversalAdditionalCameraData>();
+        glowData.renderType = CameraRenderType.Overlay;
+        glowData.renderPostProcessing = true;
+
+        mainCameraData.cameraStack.Add(glowCamera);
+        return glowCamera;
     }
 
     private static GridManager CreateGridRoot(Scene scene)
@@ -144,7 +225,7 @@ public static class Editor_CreateDefaultScene
         return go.AddComponent<Inventory>();
     }
 
-    private static (WirePlacementTool wireTool, InputRouter inputRouter) CreateToolsRoot(Scene scene, GridManager gridManager, Inventory inventory, Camera camera, PlayerInput playerInput)
+    private static (WirePlacementTool wireTool, InputRouter inputRouter) CreateToolsRoot(Scene scene, GridManager gridManager, Inventory inventory, Camera camera, PlayerInput playerInput, string wireGlowLayerName)
     {
         var go = new GameObject("Tools");
         SceneManager.MoveGameObjectToScene(go, scene);
@@ -154,6 +235,7 @@ public static class Editor_CreateDefaultScene
         wireToolSO.FindProperty("grid").objectReferenceValue = gridManager;
         wireToolSO.FindProperty("cameraOverride").objectReferenceValue = camera;
         wireToolSO.FindProperty("playerInput").objectReferenceValue = playerInput;
+        wireToolSO.FindProperty("wireGlowLayerName").stringValue = wireGlowLayerName;
         wireToolSO.ApplyModifiedPropertiesWithoutUndo();
 
         var inputRouter = go.AddComponent<InputRouter>();

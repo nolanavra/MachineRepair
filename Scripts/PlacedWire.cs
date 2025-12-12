@@ -28,10 +28,12 @@ namespace MachineRepair
 
         [Header("Visuals")]
         [SerializeField] private float bloomIntensity = 3f;
+        [SerializeField] private float unpoweredBloomIntensity = 1f;
         [SerializeField] private LineRenderer lineRenderer;
 
         private Color baseColor = Color.white;
         private bool isCircuitPowered;
+        private int glowLayer = -1;
 
         /// <summary>
         /// Checks whether the wire should be marked as damaged based on current and
@@ -55,6 +57,21 @@ namespace MachineRepair
             ApplyBloom(false);
         }
 
+        public void ConfigureGlow(float poweredBloom, float idleBloom, int layer)
+        {
+            bloomIntensity = Mathf.Max(0f, poweredBloom);
+            unpoweredBloomIntensity = Mathf.Max(0f, idleBloom);
+            glowLayer = layer;
+
+            if (glowLayer >= 0)
+            {
+                gameObject.layer = glowLayer;
+                if (lineRenderer != null) lineRenderer.gameObject.layer = glowLayer;
+            }
+
+            ApplyBloom(isCircuitPowered);
+        }
+
         public void SetCircuitPowered(bool powered)
         {
             if (isCircuitPowered == powered) return;
@@ -66,7 +83,8 @@ namespace MachineRepair
         {
             if (lineRenderer == null) return;
 
-            var targetColor = enabled ? baseColor * bloomIntensity : baseColor;
+            var bloomMultiplier = enabled ? bloomIntensity : unpoweredBloomIntensity;
+            var targetColor = baseColor * bloomMultiplier;
             targetColor.a = baseColor.a;
 
             lineRenderer.startColor = targetColor;

@@ -37,6 +37,11 @@ namespace MachineRepair
         [SerializeField, Min(0)] private int lineCornerVertices = 0;
         [SerializeField, Min(0)] private int lineCapVertices = 0;
 
+        [Header("Glow")]
+        [SerializeField] private string wireGlowLayerName = "WireGlow";
+        [SerializeField, Min(0f)] private float poweredWireBloomIntensity = 3f;
+        [SerializeField, Min(0f)] private float unpoweredWireBloomIntensity = 1f;
+
         [Header("Behavior")]
         [SerializeField] private WireType wireType = WireType.AC;
         [SerializeField] private float previewZOffset = -0.1f;
@@ -60,6 +65,7 @@ namespace MachineRepair
         private Vector2Int? startCell;
         private InputAction pointAction;
         private Vector2 pointerScreenPosition;
+        private int? wireGlowLayerIndex;
 
         public event Action<WireConnectionInfo> ConnectionRegistered;
 
@@ -299,6 +305,7 @@ namespace MachineRepair
                 activePreview.sortingOrder = 100;
             }
 
+            ApplyGlowLayer(activePreview.gameObject);
             ApplyWireColor(activePreview);
             ConfigureLineRenderer(activePreview);
         }
@@ -417,6 +424,7 @@ namespace MachineRepair
 
             renderer.transform.SetParent(placedWire.transform, worldPositionStays: false);
             placedWire.AttachRenderer(renderer, wireColor);
+            placedWire.ConfigureGlow(poweredWireBloomIntensity, unpoweredWireBloomIntensity, WireGlowLayer);
 
             placedWires.Add(renderer);
         }
@@ -518,6 +526,30 @@ namespace MachineRepair
             renderer.numCapVertices = lineCapVertices;
         }
 
+        private int WireGlowLayer
+        {
+            get
+            {
+                if (!wireGlowLayerIndex.HasValue)
+                {
+                    int layer = LayerMask.NameToLayer(wireGlowLayerName);
+                    wireGlowLayerIndex = layer >= 0 ? layer : -1;
+                }
+
+                return wireGlowLayerIndex!.Value;
+            }
+        }
+
+        private void ApplyGlowLayer(GameObject target)
+        {
+            if (target == null) return;
+
+            int layer = WireGlowLayer;
+            if (layer < 0) return;
+
+            target.layer = layer;
+        }
+
         /// <summary>
         /// Retrieves the connection endpoints associated with a wire cell.
         /// </summary>
@@ -555,6 +587,7 @@ namespace MachineRepair
 
             var go = new GameObject("PlacedWire");
             go.transform.SetParent(transform, worldPositionStays: false);
+            ApplyGlowLayer(go);
             var placedWire = go.AddComponent<PlacedWire>();
             placedWire.wireType = wireType;
             placedWire.wireDef = ActiveWireDef;
