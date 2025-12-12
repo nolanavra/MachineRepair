@@ -20,6 +20,7 @@ namespace MachineRepair.Grid
         private CellPlaceability normalCellPlaceability;
         private CellPlaceability connectorCellPlaceability;
         private CellPlaceability displayCellPlaceability;
+        private CellPlaceability[] basePlaceabilityByIndex;
         private CellTerrain[] terrainByIndex;
         private CellOccupancy[] occupancyByIndex;
         public cellDef[] cellSubGrid;
@@ -145,6 +146,7 @@ namespace MachineRepair.Grid
         public void InitGrids()
         {
             int n = CellCount;
+            basePlaceabilityByIndex = new CellPlaceability[n];
             terrainByIndex = new CellTerrain[n];
             occupancyByIndex = new CellOccupancy[n];
             spillByIndex = new float[n];
@@ -167,6 +169,7 @@ namespace MachineRepair.Grid
                 TileBase t = tilemap.GetTile(cellPos);
 
                 var placeability = ResolvePlaceability(t);
+                basePlaceabilityByIndex[i] = placeability;
                 terrainByIndex[i] = new CellTerrain
                 {
                     index = i,
@@ -754,6 +757,20 @@ namespace MachineRepair.Grid
             };
         }
 
+        private void ResetCellPlaceability(int index)
+        {
+            if (terrainByIndex == null || basePlaceabilityByIndex == null) return;
+            if (index < 0 || index >= terrainByIndex.Length) return;
+
+            var terrain = terrainByIndex[index];
+            var basePlaceability = basePlaceabilityByIndex[index];
+            if (terrain.placeability == basePlaceability) return;
+
+            terrain.placeability = basePlaceability;
+            terrainByIndex[index] = terrain;
+            RefreshCellHighlight(index);
+        }
+
         private void cellDefByType()
         {
             nullCellPlaceability = CellPlaceability.Blocked;
@@ -970,6 +987,7 @@ namespace MachineRepair.Grid
             occupancy.component?.DestroyPortMarkers();
             occupancy.component = null;
             occupancyByIndex[i] = occupancy;
+            ResetCellPlaceability(i);
             return true;
         }
 
@@ -1005,6 +1023,7 @@ namespace MachineRepair.Grid
 
                 occupancy.component = null;
                 occupancyByIndex[idx] = occupancy;
+                ResetCellPlaceability(idx);
                 removedAny = true;
             }
 
