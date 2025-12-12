@@ -225,10 +225,9 @@ namespace MachineRepair
                 var visited = new HashSet<Vector2Int>();
                 TraversePowerGraph(chassisPort.Cell, adjacency, visited);
 
-                // Treat chassis power ports as undirected seeds; any connected ports form a circuit.
-                bool hasConnections = visited.Count > 1;
+                bool hasReturnPort = HasReturnChassisPort(visited, portByCell, chassisPort.Cell);
 
-                if (!hasConnections)
+                if (!hasReturnPort)
                 {
                     MarkMissingReturnComponents(visited, portByCell);
                     continue;
@@ -371,6 +370,27 @@ namespace MachineRepair
                     }
                 }
             }
+        }
+
+        private bool HasReturnChassisPort(
+            IEnumerable<Vector2Int> visited,
+            Dictionary<Vector2Int, PowerPort> portByCell,
+            Vector2Int startPortCell)
+        {
+            foreach (var node in visited)
+            {
+                if (node == startPortCell) continue;
+
+                if (!portByCell.TryGetValue(node, out var port)) continue;
+                if (port.Component == null || port.Component.def == null) continue;
+
+                if (port.Component.def.type == ComponentType.ChassisPowerConnection)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void MarkMissingReturnComponents(IEnumerable<Vector2Int> visited, Dictionary<Vector2Int, PowerPort> portByCell)
