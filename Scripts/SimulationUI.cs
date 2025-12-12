@@ -498,6 +498,7 @@ namespace MachineRepair
             int poweredCells = 0;
             var poweredComponents = new List<string>();
             var poweredComponentNames = new HashSet<string>();
+            var missingReturnNames = new HashSet<string>();
 
             for (int y = 0; y < gridManager.height; y++)
             {
@@ -525,7 +526,20 @@ namespace MachineRepair
                 ? string.Join(", ", poweredComponents)
                 : "none";
 
-            string debugText = $"Powered cells: {poweredCells}\nPowered components: {componentList}";
+            if (simulationManager.ComponentsMissingReturn != null)
+            {
+                foreach (var component in simulationManager.ComponentsMissingReturn)
+                {
+                    if (component == null || component.def == null) continue;
+                    missingReturnNames.Add(component.def.displayName);
+                }
+            }
+
+            string missingReturnList = missingReturnNames.Count > 0
+                ? string.Join(", ", missingReturnNames)
+                : "none";
+
+            string debugText = $"Powered cells: {poweredCells}\nPowered components: {componentList}\nMissing return: {missingReturnList}";
 
             if (powerDebugLabel != null)
             {

@@ -71,6 +71,7 @@ namespace MachineRepair
         public bool WaterOn => waterOn;
         public bool SimulationRunning => simulationRunning;
         public int SimulationStepCount => simulationStepCount;
+        public IReadOnlyCollection<MachineComponent> ComponentsMissingReturn => componentsMissingReturn;
 
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
@@ -209,7 +210,7 @@ namespace MachineRepair
             CollectPowerPorts(portByCell, chassisPorts);
 
             var wires = CollectPowerWires();
-            var adjacency = BuildPowerAdjacency(wires);
+            var adjacency = BuildPowerAdjacency(wires, portByCell);
 
             poweredComponents.Clear();
             poweredWires.Clear();
@@ -315,7 +316,9 @@ namespace MachineRepair
             return wires;
         }
 
-        private Dictionary<Vector2Int, List<Vector2Int>> BuildPowerAdjacency(IEnumerable<PlacedWire> wires)
+        private Dictionary<Vector2Int, List<Vector2Int>> BuildPowerAdjacency(
+            IEnumerable<PlacedWire> wires,
+            Dictionary<Vector2Int, PowerPort> portByCell)
         {
             var adjacency = new Dictionary<Vector2Int, List<Vector2Int>>();
 
@@ -323,11 +326,68 @@ namespace MachineRepair
             {
                 if (wire == null) continue;
 
-                AddNeighbor(wire.startPortCell, wire.endPortCell);
-                AddNeighbor(wire.endPortCell, wire.startPortCell);
+                AddDirectionalNeighbor(wire.startPortCell, wire.endPortCell);
+                AddDirectionalNeighbor(wire.endPortCell, wire.startPortCell);
+            }
+
+            var portsByComponent = new Dictionary<MachineComponent, List<PowerPort>>();
+            foreach (var kvp in portByCell)
+            {
+                if (kvp.Value.Component == null) continue;
+
+                if (!portsByComponent.TryGetValue(kvp.Value.Component, out var list))
+                {
+                    list = new List<PowerPort>();
+                    portsByComponent[kvp.Value.Component] = list;
+                }
+
+                list.Add(kvp.Value);
+            }
+
+            foreach (var kvp in portsByComponent)
+            {
+                var inputs = new List<PowerPort>();
+                var outputs = new List<PowerPort>();
+
+                foreach (var port in kvp.Value)
+                {
+                    if (port.IsInput)
+                    {
+                        inputs.Add(port);
+                    }
+                    else
+                    {
+                        outputs.Add(port);
+                    }
+                }
+
+                foreach (var input in inputs)
+                {
+                    foreach (var output in outputs)
+                    {
+                        if (input.Cell == output.Cell) continue;
+
+                        AddNeighbor(input.Cell, output.Cell);
+                    }
+                }
             }
 
             return adjacency;
+
+            void AddDirectionalNeighbor(Vector2Int from, Vector2Int to)
+            {
+                if (!grid.InBounds(from.x, from.y) || !grid.InBounds(to.x, to.y)) return;
+
+                bool canExit = true;
+                if (portByCell.TryGetValue(from, out var fromPort))
+                {
+                    canExit = !fromPort.IsInput;
+                }
+
+                if (!canExit) return;
+
+                AddNeighbor(from, to);
+            }
 
             void AddNeighbor(Vector2Int a, Vector2Int b)
             {
@@ -384,7 +444,9 @@ namespace MachineRepair
                 if (!portByCell.TryGetValue(node, out var port)) continue;
                 if (port.Component == null || port.Component.def == null) continue;
 
-                if (port.Component.def.type == ComponentType.ChassisPowerConnection)
+                bool isChassis = port.Component.def.type == ComponentType.ChassisPowerConnection;
+
+                if (isChassis)
                 {
                     return true;
                 }
@@ -415,12 +477,21 @@ namespace MachineRepair
         {
             var circuitComponents = new HashSet<MachineComponent>();
             var circuitWires = new HashSet<PlacedWire>();
+            var componentPorts = new Dictionary<MachineComponent, List<PowerPort>>();
 
             foreach (var node in visited)
             {
                 if (portByCell.TryGetValue(node, out var port) && port.Component != null)
                 {
                     circuitComponents.Add(port.Component);
+
+                    if (!componentPorts.TryGetValue(port.Component, out var ports))
+                    {
+                        ports = new List<PowerPort>();
+                        componentPorts[port.Component] = ports;
+                    }
+
+                    ports.Add(port);
                 }
 
                 foreach (var wire in wires)
@@ -434,6 +505,42 @@ namespace MachineRepair
 
             foreach (var component in circuitComponents)
             {
+                if (component == null || component.def == null) continue;
+
+                bool hasInbound = false;
+                bool hasOutbound = false;
+                Vector2Int? inboundCell = null;
+                Vector2Int? outboundCell = null;
+
+                if (componentPorts.TryGetValue(component, out var ports))
+                {
+                    foreach (var port in ports)
+                    {
+                        if (port.IsInput)
+                        {
+                            hasInbound = true;
+                            inboundCell ??= port.Cell;
+                        }
+                        else
+                        {
+                            hasOutbound = true;
+                            outboundCell ??= port.Cell;
+                        }
+                    }
+                }
+
+                bool hasReturnPath = hasInbound && hasOutbound && inboundCell.HasValue && outboundCell.HasValue && inboundCell.Value != outboundCell.Value;
+
+                if (!hasReturnPath)
+                {
+                    if (component.def.requiresPower)
+                    {
+                        componentsMissingReturn.Add(component);
+                    }
+
+                    continue;
+                }
+
                 ApplyComponentPower(component, voltage, current);
             }
 
