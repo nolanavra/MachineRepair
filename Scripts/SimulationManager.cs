@@ -52,6 +52,7 @@ namespace MachineRepair
         private readonly Dictionary<MachineComponent, float> componentCurrent = new();
         private readonly Dictionary<PlacedWire, float> wireVoltage = new();
         private readonly Dictionary<PlacedWire, float> wireCurrent = new();
+        private readonly Dictionary<Vector2Int, PortElectricalState> portElectricalState = new();
         private readonly List<List<Vector2Int>> poweredLoops = new();
 
         private static readonly Vector2Int[] WaterPropagationOffsets =
@@ -73,6 +74,11 @@ namespace MachineRepair
         public bool SimulationRunning => simulationRunning;
         public int SimulationStepCount => simulationStepCount;
         public IReadOnlyCollection<MachineComponent> ComponentsMissingReturn => componentsMissingReturn;
+
+        public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
+        {
+            return portElectricalState.TryGetValue(portCell, out state);
+        }
 
         /// <summary>
         /// Raised after a simulation step finishes. UI can listen for snapshot updates.
@@ -203,6 +209,7 @@ namespace MachineRepair
             {
                 DepowerAllComponents();
                 DepowerAllWires();
+                portElectricalState.Clear();
                 return;
             }
 
@@ -221,8 +228,9 @@ namespace MachineRepair
             componentCurrent.Clear();
             wireVoltage.Clear();
             wireCurrent.Clear();
+            portElectricalState.Clear();
 
-            ApplyPoweredLoops(loops, portByCell, powerGraph.WireByEdge);
+            ApplyPoweredLoops(loops, portByCell, powerGraph.WireByEdge, portElectricalState);
 
             UpdatePoweredCircuitWires(poweredWires);
             DepowerUnvisitedComponents();
@@ -453,22 +461,37 @@ namespace MachineRepair
         private void ApplyPoweredLoops(
             IEnumerable<List<Vector2Int>> loops,
             Dictionary<Vector2Int, PowerPort> portByCell,
-            Dictionary<(Vector2Int, Vector2Int), PlacedWire> wireByEdge)
+            Dictionary<(Vector2Int, Vector2Int), PlacedWire> wireByEdge,
+            Dictionary<Vector2Int, PortElectricalState> electricalByPort)
         {
+            var componentPorts = new Dictionary<MachineComponent, ComponentPortState>();
+
             foreach (var loop in loops)
             {
                 if (loop == null || loop.Count < 2) continue;
 
-                float loopVoltage = 0f;
-                float loopCurrent = 0f;
-                var componentPorts = new Dictionary<MachineComponent, ComponentPortState>();
+                float activeVoltage = 0f;
+                float activeCurrent = 0f;
 
-                foreach (var node in loop)
+                for (int i = 0; i < loop.Count; i++)
                 {
+                    var node = loop[i];
+
                     if (portByCell.TryGetValue(node, out var port))
                     {
-                        loopVoltage = Mathf.Max(loopVoltage, port.Voltage);
-                        loopCurrent = Mathf.Max(loopCurrent, port.Current);
+                        if (IsChassisPowerPort(port))
+                        {
+                            activeVoltage = Mathf.Max(activeVoltage, port.Voltage);
+                            activeCurrent = Mathf.Max(activeCurrent, port.Current);
+                        }
+
+                        var electrical = new PortElectricalState
+                        {
+                            Voltage = activeVoltage,
+                            Current = activeCurrent
+                        };
+
+                        MergePortElectricalState(node, electrical, electricalByPort);
 
                         if (port.Component != null)
                         {
@@ -477,46 +500,69 @@ namespace MachineRepair
                                 state = new ComponentPortState();
                             }
 
-                            state.Register(port);
+                            state.Register(port, electrical);
                             componentPorts[port.Component] = state;
                         }
                     }
-                }
 
-                for (int i = 0; i < loop.Count - 1; i++)
-                {
-                    var a = loop[i];
-                    var b = loop[i + 1];
-
-                    if (wireByEdge.TryGetValue((a, b), out var wire) || wireByEdge.TryGetValue((b, a), out wire))
+                    if (i < loop.Count - 1)
                     {
-                        ApplyWirePower(wire, loopVoltage, loopCurrent);
-                        poweredWires.Add(wire);
-                    }
-                }
+                        var next = loop[i + 1];
 
-                foreach (var kvp in componentPorts)
-                {
-                    var component = kvp.Key;
-                    var state = kvp.Value;
-
-                    if (component == null || component.def == null) continue;
-
-                    if (!state.HasInbound || !state.HasOutbound)
-                    {
-                        if (component.def.requiresPower)
+                        if (wireByEdge.TryGetValue((node, next), out var wire) || wireByEdge.TryGetValue((next, node), out wire))
                         {
-                            componentsMissingReturn.Add(component);
+                            if (activeVoltage > 0f || activeCurrent > 0f)
+                            {
+                                ApplyWirePower(wire, activeVoltage, activeCurrent);
+                                poweredWires.Add(wire);
+                            }
                         }
-
-                        continue;
                     }
-
-                    ApplyComponentPower(component, loopVoltage, loopCurrent);
                 }
 
                 poweredLoops.Add(new List<Vector2Int>(loop));
             }
+
+            foreach (var kvp in componentPorts)
+            {
+                var component = kvp.Key;
+                var state = kvp.Value;
+
+                if (component == null || component.def == null) continue;
+
+                if (!state.HasInbound || !state.HasOutbound)
+                {
+                    if (component.def.requiresPower)
+                    {
+                        componentsMissingReturn.Add(component);
+                    }
+
+                    continue;
+                }
+
+                ApplyComponentPower(component, state.MaxVoltage, state.MaxCurrent);
+            }
+        }
+
+        private static bool IsChassisPowerPort(PowerPort port)
+        {
+            return port.Component != null
+                && port.Component.def != null
+                && port.Component.def.type == ComponentType.ChassisPowerConnection;
+        }
+
+        private static void MergePortElectricalState(
+            Vector2Int portCell,
+            PortElectricalState electrical,
+            Dictionary<Vector2Int, PortElectricalState> electricalByPort)
+        {
+            if (electricalByPort.TryGetValue(portCell, out var existing))
+            {
+                electrical.Voltage = Mathf.Max(existing.Voltage, electrical.Voltage);
+                electrical.Current = Mathf.Max(existing.Current, electrical.Current);
+            }
+
+            electricalByPort[portCell] = electrical;
         }
 
         private struct PowerGraph
@@ -529,9 +575,16 @@ namespace MachineRepair
         {
             public bool HasInbound;
             public bool HasOutbound;
+            public float MaxVoltage;
+            public float MaxCurrent;
 
-            public void Register(PowerPort port)
+            public void Register(PowerPort port, PortElectricalState electrical)
             {
+                if (electrical.Voltage <= 0f && electrical.Current <= 0f)
+                {
+                    return;
+                }
+
                 if (port.IsInput)
                 {
                     HasInbound = true;
@@ -540,7 +593,16 @@ namespace MachineRepair
                 {
                     HasOutbound = true;
                 }
+
+                MaxVoltage = Mathf.Max(MaxVoltage, electrical.Voltage);
+                MaxCurrent = Mathf.Max(MaxCurrent, electrical.Current);
             }
+        }
+
+        public struct PortElectricalState
+        {
+            public float Voltage;
+            public float Current;
         }
 
         private void ApplyComponentPower(MachineComponent component, float voltage, float current)
@@ -620,6 +682,7 @@ namespace MachineRepair
             wireCurrent.Clear();
             completedCircuitWires.Clear();
             poweredLoops.Clear();
+            portElectricalState.Clear();
 
             var wires = CollectPowerWires();
             foreach (var wire in wires)
@@ -912,7 +975,8 @@ namespace MachineRepair
                 Flow = (float[])flowGraph.Clone(),
                 Signals = (bool[])signalGraph.Clone(),
                 Faults = new List<string>(faultLog),
-                PowerLoops = CloneLoops(poweredLoops)
+                PowerLoops = CloneLoops(poweredLoops),
+                PortElectrical = new Dictionary<Vector2Int, PortElectricalState>(portElectricalState)
             };
 
             SimulationStepCompleted?.Invoke();
@@ -1142,6 +1206,19 @@ namespace MachineRepair
             public bool[] Signals;
             public IReadOnlyList<string> Faults;
             public IReadOnlyList<IReadOnlyList<Vector2Int>> PowerLoops;
+            public IReadOnlyDictionary<Vector2Int, PortElectricalState> PortElectrical;
+
+            public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
+            {
+                if (PortElectrical != null && PortElectrical.TryGetValue(portCell, out var electrical))
+                {
+                    state = electrical;
+                    return true;
+                }
+
+                state = default;
+                return false;
+            }
         }
 
         private void UpdateChassisPowerAvailability(bool powerEnabled)
