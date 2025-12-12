@@ -74,6 +74,8 @@ namespace MachineRepair
             cam = cameraOverride != null ? cameraOverride : Camera.main;
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
 
+            CacheWireGlowLayer();
+
             EnsureWireDefs();
             SyncWireColorToType();
 
@@ -416,6 +418,7 @@ namespace MachineRepair
                 renderer = activePreview;
             }
 
+            ApplyGlowLayer(renderer.gameObject);
             ApplyWireColor(renderer);
             ConfigureLineRenderer(renderer);
 
@@ -532,12 +535,24 @@ namespace MachineRepair
             {
                 if (!wireGlowLayerIndex.HasValue)
                 {
-                    int layer = LayerMask.NameToLayer(wireGlowLayerName);
-                    wireGlowLayerIndex = layer >= 0 ? layer : -1;
+                    CacheWireGlowLayer();
                 }
 
                 return wireGlowLayerIndex!.Value;
             }
+        }
+
+        private void CacheWireGlowLayer()
+        {
+            int layer = LayerMask.NameToLayer(wireGlowLayerName);
+            if (layer < 0)
+            {
+                Debug.LogError($"WirePlacementTool could not find wire glow layer '{wireGlowLayerName}'.");
+                wireGlowLayerIndex = -1;
+                return;
+            }
+
+            wireGlowLayerIndex = layer;
         }
 
         private void ApplyGlowLayer(GameObject target)
