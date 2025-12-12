@@ -13,6 +13,7 @@ using UnityEngine.InputSystem;
 using MachineRepair;
 using MachineRepair.Grid;
 using MachineRepair.Input;
+using MachineRepair.Rendering;
 using UnityEngine.Rendering.Universal;
 
 public static class Editor_CreateDefaultScene
@@ -164,6 +165,12 @@ public static class Editor_CreateDefaultScene
         var glowData = glowGO.AddComponent<UniversalAdditionalCameraData>();
         glowData.renderType = CameraRenderType.Overlay;
         glowData.renderPostProcessing = true;
+
+        var cameraSync = glowGO.AddComponent<WireGlowCameraSync>();
+        var syncSO = new SerializedObject(cameraSync);
+        syncSO.FindProperty("baseCamera").objectReferenceValue = mainCamera;
+        syncSO.FindProperty("wireGlowCamera").objectReferenceValue = glowCamera;
+        syncSO.ApplyModifiedPropertiesWithoutUndo();
 
         mainCameraData.cameraStack.Add(glowCamera);
         return glowCamera;
