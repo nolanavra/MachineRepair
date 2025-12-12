@@ -397,7 +397,7 @@ public class InspectorUI : MonoBehaviour
 
     private bool SelectionIsRemovable(InputRouter.SelectionInfo selection)
     {
-        if (!selection.hasSelection || selection.cellData == null)
+        if (!selection.hasSelection)
             return false;
 
         switch (selection.target)
