@@ -269,6 +269,8 @@ namespace MachineRepair
                         {
                             Cell = global,
                             Component = cell.component,
+                            PortIndex = i,
+                            Port = port,
                             IsInput = port.isInput,
                             Voltage = voltage,
                             Current = current
@@ -363,6 +365,11 @@ namespace MachineRepair
                 {
                     foreach (var output in outputs)
                     {
+                        if (!AllowsComponentConnection(input.Component, input, output))
+                        {
+                            continue;
+                        }
+
                         AddDirectionalEdge(input.Cell, output.Cell);
                         AddDirectionalEdge(output.Cell, input.Cell);
                     }
@@ -385,6 +392,18 @@ namespace MachineRepair
                 AddDirectionalEdge(b, a);
                 graph.WireByEdge[(a, b)] = wire;
                 graph.WireByEdge[(b, a)] = wire;
+            }
+
+            bool AllowsComponentConnection(MachineComponent component, PowerPort from, PowerPort to)
+            {
+                if (component == null) return true;
+
+                if (component.TryGetComponent<IConditionalPortLink>(out var conditional))
+                {
+                    return conditional.AllowsConnection(from.Port, from.PortIndex, to.Port, to.PortIndex);
+                }
+
+                return true;
             }
 
             void AddDirectionalEdge(Vector2Int a, Vector2Int b)
@@ -749,6 +768,8 @@ namespace MachineRepair
         {
             public Vector2Int Cell;
             public MachineComponent Component;
+            public int PortIndex;
+            public PortLocal Port;
             public bool IsInput;
             public float Voltage;
             public float Current;

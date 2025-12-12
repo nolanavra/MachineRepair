@@ -12,7 +12,8 @@ namespace MachineRepair {
         Grouphead,
         Controler,
         SolonoidValve,
-        FlowRestrictor
+        FlowRestrictor,
+        Switch
     }
 
     [RequireComponent(typeof(Transform))]

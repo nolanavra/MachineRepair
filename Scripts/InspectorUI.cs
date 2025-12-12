@@ -26,8 +26,13 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private GameObject panelRoot;
     [SerializeField] private CanvasGroup panelCanvasGroup;
     [SerializeField] private Button removeButton;
+    [Header("Switch UI")]
+    [SerializeField] private GameObject switchPanel;
+    [SerializeField] private Text switchStateText;
+    [SerializeField] private Button switchToggleButton;
 
     private InputRouter.SelectionInfo currentSelection;
+    private SwitchComponent inspectedSwitch;
 
     private void Awake()
     {
@@ -66,6 +71,11 @@ public class InspectorUI : MonoBehaviour
         {
             removeButton.onClick.AddListener(OnRemoveButtonClicked);
         }
+
+        if (switchToggleButton != null)
+        {
+            switchToggleButton.onClick.AddListener(OnSwitchToggleButtonClicked);
+        }
     }
 
     private void OnDisable()
@@ -86,6 +96,11 @@ public class InspectorUI : MonoBehaviour
         if (removeButton != null)
         {
             removeButton.onClick.RemoveListener(OnRemoveButtonClicked);
+        }
+
+        if (switchToggleButton != null)
+        {
+            switchToggleButton.onClick.RemoveListener(OnSwitchToggleButtonClicked);
         }
     }
 
@@ -145,6 +160,9 @@ public class InspectorUI : MonoBehaviour
         SetDescription(def?.description);
         SetConnections(BuildConnectionSummary(selection.cell));
         SetParameters(BuildComponentParameters(selection, def));
+        PresentSwitchSection(selection.cellData.component != null
+            ? selection.cellData.component.GetComponent<SwitchComponent>()
+            : null);
     }
 
     private void PresentPipe(InputRouter.SelectionInfo selection)
@@ -153,6 +171,7 @@ public class InspectorUI : MonoBehaviour
         SetDescription("Transports water between connected components.");
         SetConnections(BuildConnectionSummary(selection.cell));
         SetParameters("No simulation parameters for pipes.");
+        PresentSwitchSection(null);
     }
 
     private void PresentWire(InputRouter.SelectionInfo selection)
@@ -164,6 +183,7 @@ public class InspectorUI : MonoBehaviour
         SetDescription("Carries electrical or signal connections between components.");
         SetConnections(BuildWireConnectionSummary(selection.cell, selection.wireIndex));
         SetParameters(BuildWireParameters(selection.cellData, selection.wireIndex));
+        PresentSwitchSection(null);
     }
 
     private void PresentEmpty(InputRouter.SelectionInfo selection)
@@ -172,6 +192,7 @@ public class InspectorUI : MonoBehaviour
         SetDescription("Empty cell.");
         SetConnections("No connections.");
         SetParameters(string.Empty);
+        PresentSwitchSection(null);
     }
 
     private void ClearDisplay()
@@ -181,12 +202,34 @@ public class InspectorUI : MonoBehaviour
         SetConnections(string.Empty);
         SetParameters(string.Empty);
         SetPanelVisible(false);
+        PresentSwitchSection(null);
         UpdateRemoveButtonState(default);
     }
 
     private ThingDef ResolveComponentDef(MachineComponent component)
     {
         return component != null ? component.def : null;
+    }
+
+    private void PresentSwitchSection(SwitchComponent switchComponent)
+    {
+        inspectedSwitch = switchComponent;
+
+        if (switchPanel != null)
+        {
+            switchPanel.SetActive(switchComponent != null);
+        }
+
+        if (switchStateText != null)
+        {
+            switchStateText.text = switchComponent != null
+                ? $"Switch state: {(switchComponent.IsClosed ? "Closed" : "Open")}" : string.Empty;
+        }
+
+        if (switchToggleButton != null)
+        {
+            switchToggleButton.interactable = switchComponent != null;
+        }
     }
 
     private string BuildComponentParameters(InputRouter.SelectionInfo selection, ThingDef def)
@@ -243,6 +286,19 @@ public class InspectorUI : MonoBehaviour
         }
 
         return sb.ToString();
+    }
+
+    private void OnSwitchToggleButtonClicked()
+    {
+        if (inspectedSwitch == null)
+            return;
+
+        inspectedSwitch.Toggle();
+
+        if (currentSelection.hasSelection)
+        {
+            OnSelectionChanged(currentSelection);
+        }
     }
 
     private string BuildConnectionSummary(Vector2Int cell)
