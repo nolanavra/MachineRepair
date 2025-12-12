@@ -204,10 +204,9 @@ namespace MachineRepair
             }
 
             var portByCell = new Dictionary<Vector2Int, PowerPort>();
-            var chassisOutputs = new List<PowerPort>();
-            var chassisInputs = new HashSet<Vector2Int>();
+            var chassisPorts = new List<PowerPort>();
 
-            CollectPowerPorts(portByCell, chassisOutputs, chassisInputs);
+            CollectPowerPorts(portByCell, chassisPorts);
 
             var wires = CollectPowerWires();
             var adjacency = BuildPowerAdjacency(wires);
@@ -219,22 +218,23 @@ namespace MachineRepair
             wireVoltage.Clear();
             wireCurrent.Clear();
 
-            foreach (var output in chassisOutputs)
+            foreach (var chassisPort in chassisPorts)
             {
-                if (!grid.InBounds(output.Cell.x, output.Cell.y)) continue;
+                if (!grid.InBounds(chassisPort.Cell.x, chassisPort.Cell.y)) continue;
 
                 var visited = new HashSet<Vector2Int>();
-                TraversePowerGraph(output.Cell, adjacency, visited);
+                TraversePowerGraph(chassisPort.Cell, adjacency, visited);
 
-                bool hasReturn = visited.Overlaps(chassisInputs);
+                // Treat chassis power ports as undirected seeds; any connected ports form a circuit.
+                bool hasConnections = visited.Count > 1;
 
-                if (!hasReturn)
+                if (!hasConnections)
                 {
                     MarkMissingReturnComponents(visited, portByCell);
                     continue;
                 }
 
-                BuildCircuitFromVisited(visited, portByCell, wires, output.Voltage, output.Current);
+                BuildCircuitFromVisited(visited, portByCell, wires, chassisPort.Voltage, chassisPort.Current);
             }
 
             UpdatePoweredCircuitWires(poweredWires);
@@ -243,12 +243,10 @@ namespace MachineRepair
 
         private void CollectPowerPorts(
             Dictionary<Vector2Int, PowerPort> portByCell,
-            List<PowerPort> chassisOutputs,
-            HashSet<Vector2Int> chassisInputs)
+            List<PowerPort> chassisPorts)
         {
             portByCell.Clear();
-            chassisOutputs.Clear();
-            chassisInputs.Clear();
+            chassisPorts.Clear();
 
             for (int y = 0; y < grid.height; y++)
             {
@@ -285,14 +283,7 @@ namespace MachineRepair
 
                         if (cell.component.def.type == ComponentType.ChassisPowerConnection)
                         {
-                            if (port.isInput)
-                            {
-                                chassisInputs.Add(global);
-                            }
-                            else
-                            {
-                                chassisOutputs.Add(powerPort);
-                            }
+                            chassisPorts.Add(powerPort);
                         }
                     }
                 }
