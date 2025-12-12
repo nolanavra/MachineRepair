@@ -325,8 +325,15 @@ public class InspectorUI : MonoBehaviour
 
     private string ResolveComponentName(MachineComponent component)
     {
+        if (component == null)
+            return "Component";
+
         var def = ResolveComponentDef(component);
-        return def?.displayName ?? component?.name ?? "Component";
+        if (!string.IsNullOrEmpty(def?.displayName))
+            return def.displayName;
+
+        string fallbackName = component.name;
+        return string.IsNullOrEmpty(fallbackName) ? "Component" : fallbackName;
     }
 
     private void OnWireConnectionRegistered(WirePlacementTool.WireConnectionInfo obj)
