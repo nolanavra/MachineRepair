@@ -25,5 +25,8 @@ namespace MachineRepair
         public float pressure;
         public float flow;
         public bool pipeDamaged;
+
+        [Header("Visuals")]
+        public LineRenderer lineRenderer;
     }
 }
