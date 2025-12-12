@@ -5,8 +5,8 @@ using UnityEngine;
 namespace MachineRepair
 {
     /// <summary>
-    /// Represents a wire laid on the grid, tracking its connections and basic
-    /// simulation data.
+    /// Represents a wire laid on the grid, tracking its connections, basic
+    /// simulation data, and optional color overrides for powered/unpowered glow.
     /// </summary>
     [RequireComponent(typeof(Transform))]
     public class PlacedWire : MonoBehaviour
@@ -29,6 +29,10 @@ namespace MachineRepair
         [Header("Visuals")]
         [SerializeField] private float bloomIntensity = 3f;
         [SerializeField] private float unpoweredBloomIntensity = 1f;
+        [SerializeField] private bool usePoweredColorOverride;
+        [SerializeField] private Color poweredColorOverride = Color.white;
+        [SerializeField] private bool useUnpoweredColorOverride;
+        [SerializeField] private Color unpoweredColorOverride = Color.white;
         [SerializeField] private LineRenderer lineRenderer;
 
         private Color baseColor = Color.white;
@@ -84,8 +88,9 @@ namespace MachineRepair
             if (lineRenderer == null) return;
 
             var bloomMultiplier = enabled ? bloomIntensity : unpoweredBloomIntensity;
-            var targetColor = baseColor * bloomMultiplier;
-            targetColor.a = baseColor.a;
+            var bloomBaseColor = ResolveBaseColor(enabled);
+            var targetColor = bloomBaseColor * bloomMultiplier;
+            targetColor.a = bloomBaseColor.a;
 
             lineRenderer.startColor = targetColor;
             lineRenderer.endColor = targetColor;
@@ -96,6 +101,13 @@ namespace MachineRepair
                 material.EnableKeyword("_EMISSION");
                 material.SetColor("_EmissionColor", enabled ? targetColor : Color.black);
             }
+        }
+
+        private Color ResolveBaseColor(bool powered)
+        {
+            if (powered && usePoweredColorOverride) return poweredColorOverride;
+            if (!powered && useUnpoweredColorOverride) return unpoweredColorOverride;
+            return baseColor;
         }
     }
 }
