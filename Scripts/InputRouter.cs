@@ -429,7 +429,7 @@ namespace MachineRepair.Grid
             SelectionChanged?.Invoke(CurrentSelection);
         }
 
-        private void ClearSelection()
+        public void ClearSelection()
         {
             selectionCycleIndex = 0;
             selectionCycleOrder.Clear();
