@@ -1029,6 +1029,10 @@ namespace MachineRepair.Grid
             {
                 case InputRouter.CellSelectionTarget.Component:
                     return TryDeleteComponent(selection.cellData.component);
+                case InputRouter.CellSelectionTarget.Wire:
+                    return TryDeleteWire(selection.cellData.GetWireAt(selection.wireIndex));
+                case InputRouter.CellSelectionTarget.Pipe:
+                    return TryDeletePipe(selection.cellData.GetPipeAt(selection.pipeIndex));
                 default:
                     return false;
             }
@@ -1047,6 +1051,29 @@ namespace MachineRepair.Grid
         {
             if (component?.def == null || inventory == null) return;
             inventory.AddItem(component.def.defName, 1);
+        }
+
+        private bool TryDeleteWire(PlacedWire wire)
+        {
+            if (wire == null) return false;
+            if (!ClearWireRun(wire.occupiedCells, wire)) return false;
+
+            Destroy(wire.gameObject);
+            return true;
+        }
+
+        private bool TryDeletePipe(PlacedPipe pipe)
+        {
+            if (pipe == null) return false;
+            if (!ClearPipeRun(pipe.occupiedCells, pipe)) return false;
+
+            if (pipe.lineRenderer != null)
+            {
+                Destroy(pipe.lineRenderer.gameObject);
+            }
+
+            Destroy(pipe.gameObject);
+            return true;
         }
 
         public bool AddWireRun(IEnumerable<Vector2Int> cells, PlacedWire wire)
@@ -1158,6 +1185,41 @@ namespace MachineRepair.Grid
             }
 
             return placedAny;
+        }
+
+        public bool ClearWireRun(IEnumerable<Vector2Int> cells, PlacedWire wire)
+        {
+            if (cells == null || wire == null) return false;
+
+            foreach (var c in cells)
+            {
+                if (!InBounds(c.x, c.y))
+                {
+                    Debug.LogWarning($"ClearWireRun failed: cell {c} out of bounds.");
+                    return false;
+                }
+            }
+
+            bool clearedAny = false;
+            foreach (var c in cells)
+            {
+                int idx = ToIndex(c);
+                var occupancy = occupancyByIndex[idx];
+
+                if (occupancy.wires != null && occupancy.wires.Contains(wire))
+                {
+                    occupancy.wires.Remove(wire);
+                    if (occupancy.wires.Count == 0)
+                    {
+                        occupancy.wires = null;
+                    }
+
+                    occupancyByIndex[idx] = occupancy;
+                    clearedAny = true;
+                }
+            }
+
+            return clearedAny;
         }
 
         public bool ClearPipeRun(IEnumerable<Vector2Int> cells, PlacedPipe pipe)

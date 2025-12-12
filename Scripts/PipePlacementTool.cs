@@ -241,7 +241,7 @@ namespace MachineRepair
                 CancelPreview();
                 return;
             }
-            RenderFinalPipe(path);
+            RenderFinalPipe(path, placedPipe);
             placedPipes.Add(placedPipe);
             RegisterConnections(placedPipe);
 
@@ -572,22 +572,18 @@ namespace MachineRepair
                 Destroy(pipe.gameObject);
             }
 
-            if (lastIndex < placedPipeRenderers.Count)
+            if (pipe != null && pipe.lineRenderer != null)
             {
-                var renderer = placedPipeRenderers[lastIndex];
-                placedPipeRenderers.RemoveAt(lastIndex);
-                if (renderer != null)
-                {
-                    Destroy(renderer.gameObject);
-                }
+                placedPipeRenderers.Remove(pipe.lineRenderer);
+                Destroy(pipe.lineRenderer.gameObject);
             }
 
             return true;
         }
 
-        private void RenderFinalPipe(List<Vector2Int> path)
+        private void RenderFinalPipe(List<Vector2Int> path, PlacedPipe placedPipe)
         {
-            if (path == null || path.Count == 0) return;
+            if (path == null || path.Count == 0 || placedPipe == null) return;
 
             LineRenderer renderer;
             if (pipePreviewPrefab != null)
@@ -609,6 +605,8 @@ namespace MachineRepair
             SetRendererPositions(renderer, curved);
 
             placedPipeRenderers.Add(renderer);
+            renderer.transform.SetParent(placedPipe.transform, worldPositionStays: false);
+            placedPipe.lineRenderer = renderer;
         }
 
         private void ConfigureLineRenderer(LineRenderer renderer)
