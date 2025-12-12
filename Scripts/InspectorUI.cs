@@ -25,6 +25,7 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private Text parametersText;
     [SerializeField] private GameObject panelRoot;
     [SerializeField] private CanvasGroup panelCanvasGroup;
+    [SerializeField] private Button removeButton;
 
     private InputRouter.SelectionInfo currentSelection;
 
@@ -60,6 +61,11 @@ public class InspectorUI : MonoBehaviour
             simulationManager.WaterToggled += OnSimulationStateChanged;
             simulationManager.SimulationStepCompleted += OnSimulationStepCompleted;
         }
+
+        if (removeButton != null)
+        {
+            removeButton.onClick.AddListener(OnRemoveButtonClicked);
+        }
     }
 
     private void OnDisable()
@@ -75,6 +81,11 @@ public class InspectorUI : MonoBehaviour
             simulationManager.PowerToggled -= OnSimulationStateChanged;
             simulationManager.WaterToggled -= OnSimulationStateChanged;
             simulationManager.SimulationStepCompleted -= OnSimulationStepCompleted;
+        }
+
+        if (removeButton != null)
+        {
+            removeButton.onClick.RemoveListener(OnRemoveButtonClicked);
         }
     }
 
@@ -105,6 +116,8 @@ public class InspectorUI : MonoBehaviour
                 PresentEmpty(selection);
                 break;
         }
+
+        UpdateRemoveButtonState(selection);
     }
 
     private void OnSimulationStepCompleted()
@@ -168,6 +181,7 @@ public class InspectorUI : MonoBehaviour
         SetConnections(string.Empty);
         SetParameters(string.Empty);
         SetPanelVisible(false);
+        UpdateRemoveButtonState(default);
     }
 
     private ThingDef ResolveComponentDef(MachineComponent component)
@@ -368,6 +382,52 @@ public class InspectorUI : MonoBehaviour
             panelCanvasGroup.alpha = visible ? 1f : 0f;
             panelCanvasGroup.interactable = visible;
             panelCanvasGroup.blocksRaycasts = visible;
+        }
+    }
+
+    private void UpdateRemoveButtonState(InputRouter.SelectionInfo selection)
+    {
+        if (removeButton == null)
+            return;
+
+        bool removable = SelectionIsRemovable(selection);
+        removeButton.interactable = removable;
+        removeButton.gameObject.SetActive(removable || panelRoot == null || panelRoot.activeSelf);
+    }
+
+    private bool SelectionIsRemovable(InputRouter.SelectionInfo selection)
+    {
+        if (!selection.hasSelection || selection.cellData == null)
+            return false;
+
+        switch (selection.target)
+        {
+            case InputRouter.CellSelectionTarget.Component:
+                return selection.cellData.component != null;
+            case InputRouter.CellSelectionTarget.Wire:
+                return selection.wireIndex >= 0 && selection.cellData.GetWireAt(selection.wireIndex) != null;
+            case InputRouter.CellSelectionTarget.Pipe:
+                return selection.pipeIndex >= 0 && selection.cellData.GetPipeAt(selection.pipeIndex) != null;
+            default:
+                return false;
+        }
+    }
+
+    private void OnRemoveButtonClicked()
+    {
+        if (grid == null || !SelectionIsRemovable(currentSelection))
+            return;
+
+        if (grid.TryDeleteSelection(currentSelection))
+        {
+            if (inputRouter != null)
+            {
+                inputRouter.ClearSelection();
+            }
+            else
+            {
+                OnSelectionChanged(default);
+            }
         }
     }
 }
