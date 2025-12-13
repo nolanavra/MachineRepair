@@ -446,6 +446,8 @@ namespace MachineRepair.Grid
             if (machine == null)
                 machine = instance.AddComponent<MachineComponent>();
 
+            AttachTypeComponents(def, instance);
+
             machine.def = def;
             machine.grid = this;
             machine.footprint = def.footprint;
@@ -468,6 +470,20 @@ namespace MachineRepair.Grid
             ApplyPortMarkers(machine);
 
             return machine;
+        }
+
+        private static void AttachTypeComponents(ThingDef def, GameObject instance)
+        {
+            if (def == null || instance == null)
+            {
+                return;
+            }
+
+            if (def.type == ComponentType.Switch
+                && instance.GetComponent<SwitchComponent>() == null)
+            {
+                instance.AddComponent<SwitchComponent>();
+            }
         }
 
         public void ApplyPortMarkers(MachineComponent machine)
