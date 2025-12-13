@@ -115,6 +115,83 @@ namespace MachineRepair.Grid
         private Dictionary<ThingDef, GameObject> componentPrefabByDef;
         private Dictionary<string, GameObject> componentPrefabByName;
 
+        private void EnsureComponentPrefabMappings()
+        {
+            componentPrefabs ??= new List<ComponentPrefabMapping>();
+
+            bool mappingMissing = componentPrefabs.Count == 0;
+            var existingDefs = new HashSet<ThingDef>();
+            var existingNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < componentPrefabs.Count; i++)
+            {
+                var entry = componentPrefabs[i];
+                if (entry == null || entry.prefab == null)
+                {
+                    mappingMissing = true;
+                    continue;
+                }
+
+                if (entry.def != null)
+                {
+                    if (!existingDefs.Add(entry.def))
+                    {
+                        Debug.LogWarning($"GridManager: Duplicate ThingDef mapping for '{entry.def.defName ?? entry.def.name}'. Skipping extras.");
+                    }
+                }
+
+                var keyName = !string.IsNullOrWhiteSpace(entry.defNameOverride)
+                    ? entry.defNameOverride
+                    : entry.def != null ? entry.def.defName : null;
+
+                if (!string.IsNullOrWhiteSpace(keyName))
+                {
+                    if (!existingNames.Add(keyName))
+                    {
+                        Debug.LogWarning($"GridManager: Duplicate defName mapping for '{keyName}'. Skipping extras.");
+                    }
+                }
+            }
+
+            if (!mappingMissing)
+            {
+                return;
+            }
+
+            var resourcePrefabs = Resources.LoadAll<GameObject>("Components");
+            foreach (var prefab in resourcePrefabs)
+            {
+                var machine = prefab != null ? prefab.GetComponent<MachineComponent>() : null;
+                var def = machine != null ? machine.def : null;
+                var defName = def != null ? def.defName : null;
+
+                if (def == null)
+                {
+                    Debug.LogWarning($"GridManager: Prefab '{prefab?.name}' in Resources/Components is missing a ThingDef reference.");
+                    continue;
+                }
+
+                bool defAlreadyMapped = existingDefs.Contains(def);
+                bool nameAlreadyMapped = !string.IsNullOrWhiteSpace(defName) && existingNames.Contains(defName);
+
+                if (defAlreadyMapped || nameAlreadyMapped)
+                {
+                    continue;
+                }
+
+                var mapping = new ComponentPrefabMapping
+                {
+                    def = def,
+                    defNameOverride = string.IsNullOrWhiteSpace(defName) ? null : defName,
+                    prefab = prefab
+                };
+
+                componentPrefabs.Add(mapping);
+                existingDefs.Add(def);
+                if (!string.IsNullOrWhiteSpace(defName)) existingNames.Add(defName);
+            }
+        }
+
         [Serializable]
         private class ComponentPrefabMapping
         {
@@ -143,6 +220,9 @@ namespace MachineRepair.Grid
         private void OnValidate()
         {
             BuildComponentPrefabLookup();
+#if UNITY_EDITOR
+            ValidateComponentPrefabsInEditor();
+#endif
         }
 
         private void Update()
@@ -497,6 +577,8 @@ namespace MachineRepair.Grid
 
         private void BuildComponentPrefabLookup()
         {
+            EnsureComponentPrefabMappings();
+
             componentPrefabByDef ??= new Dictionary<ThingDef, GameObject>();
             componentPrefabByName ??= new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
 
@@ -512,10 +594,8 @@ namespace MachineRepair.Grid
 
                 if (entry.prefab == null)
                 {
-                    if (entry.def != null || !string.IsNullOrWhiteSpace(entry.defNameOverride))
-                    {
-                        Debug.LogWarning($"GridManager: Component prefab missing for def '{entry.def?.defName ?? entry.defNameOverride}'.");
-                    }
+                    var defLabel = entry.def?.defName ?? entry.defNameOverride ?? entry.def?.name;
+                    Debug.LogWarning($"GridManager: ThingDef '{defLabel}' does not have a prefab assigned.");
                     continue;
                 }
 
@@ -540,6 +620,21 @@ namespace MachineRepair.Grid
                 }
             }
         }
+
+#if UNITY_EDITOR
+        private void ValidateComponentPrefabsInEditor()
+        {
+            if (Application.isPlaying || componentPrefabs == null) return;
+
+            foreach (var entry in componentPrefabs)
+            {
+                if (entry?.def != null && entry.prefab == null)
+                {
+                    Debug.LogWarning($"GridManager: ThingDef '{entry.def.defName ?? entry.def.name}' is missing a prefab mapping in this scene.");
+                }
+            }
+        }
+#endif
 
         private GameObject ResolveComponentPrefab(ThingDef def)
         {
