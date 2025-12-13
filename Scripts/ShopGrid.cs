@@ -55,7 +55,7 @@ namespace MachineRepair.Grid
         [SerializeField] private Tilemap componentTilemap;
         [SerializeField] private ThingDef chassisPowerConnectionDef;
         [SerializeField] private ThingDef chassisWaterConnectionDef;
-        [SerializeField] private GameObject componentPrefab;
+        [SerializeField] private List<ComponentPrefabMapping> componentPrefabs = new();
 
         [Header("Placement")]
         [SerializeField] private Inventory inventory;
@@ -112,6 +112,17 @@ namespace MachineRepair.Grid
         private GameObject placementPreviewObject;
         private SpriteRenderer placementPreviewRenderer;
 
+        private Dictionary<ThingDef, GameObject> componentPrefabByDef;
+        private Dictionary<string, GameObject> componentPrefabByName;
+
+        [Serializable]
+        private class ComponentPrefabMapping
+        {
+            public ThingDef def;
+            public string defNameOverride;
+            public GameObject prefab;
+        }
+
         private void Start()
         {
 
@@ -119,6 +130,7 @@ namespace MachineRepair.Grid
         void Awake()
         {
             if (inventory == null) inventory = FindFirstObjectByType<Inventory>();
+            BuildComponentPrefabLookup();
             cellDefByType();
             InitGrids();
             setup = true;
@@ -126,6 +138,11 @@ namespace MachineRepair.Grid
             EnsureHighlightParent();
             BuildCellHighlightPool();
 
+        }
+
+        private void OnValidate()
+        {
+            BuildComponentPrefabLookup();
         }
 
         private void Update()
@@ -436,17 +453,32 @@ namespace MachineRepair.Grid
 
         private MachineComponent CreateComponentInstance(ThingDef def, Vector2Int anchorCell, int rotationSteps, Vector3 worldPosition)
         {
-            GameObject instance = componentPrefab != null
-                ? Instantiate(componentPrefab)
-                : new GameObject(def.displayName ?? def.defName ?? "MachineComponent");
+            if (def == null)
+            {
+                Debug.LogError("GridManager: Cannot create a component for a null ThingDef.");
+                return null;
+            }
 
+            GameObject prefab = ResolveComponentPrefab(def);
+            if (prefab == null)
+            {
+                Debug.LogError($"GridManager: No component prefab configured for def '{def.defName ?? def.name}'.");
+                return null;
+            }
+
+            GameObject instance = Instantiate(prefab);
             instance.name = def.displayName ?? def.defName ?? instance.name;
 
             var machine = instance.GetComponent<MachineComponent>();
             if (machine == null)
-                machine = instance.AddComponent<MachineComponent>();
-
-            AttachTypeComponents(def, instance);
+            {
+                Debug.LogError($"GridManager: Prefab '{prefab.name}' is missing MachineComponent for def '{def.defName}'.");
+                if (Application.isPlaying)
+                    Destroy(instance);
+                else
+                    DestroyImmediate(instance);
+                return null;
+            }
 
             machine.def = def;
             machine.grid = this;
@@ -457,33 +489,83 @@ namespace MachineRepair.Grid
 
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
-            instance.transform.localScale = Vector3.one * def.placedSpriteScale;
-
-            var spriteRenderer = instance.GetComponent<SpriteRenderer>();
-            if (spriteRenderer == null)
-                spriteRenderer = instance.AddComponent<SpriteRenderer>();
-
-            spriteRenderer.sprite = def.sprite;
-            spriteRenderer.color = Color.white;
-            spriteRenderer.sortingOrder = def.placedSortingOrder;
 
             ApplyPortMarkers(machine);
 
             return machine;
         }
 
-        private static void AttachTypeComponents(ThingDef def, GameObject instance)
+        private void BuildComponentPrefabLookup()
         {
-            if (def == null || instance == null)
+            componentPrefabByDef ??= new Dictionary<ThingDef, GameObject>();
+            componentPrefabByName ??= new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
+
+            componentPrefabByDef.Clear();
+            componentPrefabByName.Clear();
+
+            if (componentPrefabs == null) return;
+
+            for (int i = 0; i < componentPrefabs.Count; i++)
             {
-                return;
+                var entry = componentPrefabs[i];
+                if (entry == null) continue;
+
+                if (entry.prefab == null)
+                {
+                    if (entry.def != null || !string.IsNullOrWhiteSpace(entry.defNameOverride))
+                    {
+                        Debug.LogWarning($"GridManager: Component prefab missing for def '{entry.def?.defName ?? entry.defNameOverride}'.");
+                    }
+                    continue;
+                }
+
+                if (entry.def != null)
+                {
+                    if (!componentPrefabByDef.ContainsKey(entry.def))
+                        componentPrefabByDef.Add(entry.def, entry.prefab);
+                    else
+                        Debug.LogWarning($"GridManager: Duplicate prefab mapping for def '{entry.def.defName}'.");
+                }
+
+                string keyName = !string.IsNullOrWhiteSpace(entry.defNameOverride)
+                    ? entry.defNameOverride
+                    : entry.def != null ? entry.def.defName : null;
+
+                if (!string.IsNullOrWhiteSpace(keyName))
+                {
+                    if (!componentPrefabByName.ContainsKey(keyName))
+                        componentPrefabByName.Add(keyName, entry.prefab);
+                    else
+                        Debug.LogWarning($"GridManager: Duplicate prefab mapping for defName '{keyName}'.");
+                }
+            }
+        }
+
+        private GameObject ResolveComponentPrefab(ThingDef def)
+        {
+            if (def == null) return null;
+
+            if (componentPrefabByDef == null || componentPrefabByName == null)
+            {
+                BuildComponentPrefabLookup();
             }
 
-            if (def.type == ComponentType.Switch
-                && instance.GetComponent<SwitchComponent>() == null)
+            if (componentPrefabByDef != null
+                && componentPrefabByDef.TryGetValue(def, out var prefab)
+                && prefab != null)
             {
-                instance.AddComponent<SwitchComponent>();
+                return prefab;
             }
+
+            if (!string.IsNullOrWhiteSpace(def.defName)
+                && componentPrefabByName != null
+                && componentPrefabByName.TryGetValue(def.defName, out prefab)
+                && prefab != null)
+            {
+                return prefab;
+            }
+
+            return null;
         }
 
         public void ApplyPortMarkers(MachineComponent machine)
