@@ -68,6 +68,100 @@ namespace MachineRepair.Tests
         }
 
         [Test]
+        public void WaterArrowsCoverFullRunLength()
+        {
+            var grid = CreateGrid(3, 1);
+            var sim = CreateSimulationManager(grid);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 50f);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(2, 0), 25f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var occupied = new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0),
+                new Vector2Int(2, 0)
+            };
+
+            var pipe = CreatePipe(source, sink, 50f, occupied);
+
+            Assert.IsTrue(grid.AddPipeRun(pipe.occupiedCells, pipe));
+
+            var capturedArrows = new List<SimulationManager.WaterFlowArrow>();
+            sim.WaterFlowUpdated += arrows =>
+            {
+                capturedArrows = arrows == null
+                    ? new List<SimulationManager.WaterFlowArrow>()
+                    : new List<SimulationManager.WaterFlowArrow>(arrows);
+            };
+
+            RunWaterStep(sim);
+
+            Assert.AreEqual(1, capturedArrows.Count, "A continuous pipe should emit exactly one arrow.");
+
+            float expectedLength = CalculatePathLength(grid, pipe.occupiedCells);
+            Assert.That(capturedArrows[0].PathLength, Is.EqualTo(expectedLength).Within(0.001f),
+                "Arrow path length should span the full pipe run.");
+            Assert.That(capturedArrows[0].TravelDistance, Is.EqualTo(expectedLength * 0.5f).Within(0.001f),
+                "Partially filled pipe should produce half-length arrow travel distance.");
+
+            RunWaterStep(sim);
+
+            Assert.AreEqual(1, capturedArrows.Count, "Arrow spawning should remain one per run.");
+            Assert.That(capturedArrows[0].TravelDistance, Is.EqualTo(expectedLength).Within(0.001f),
+                "Full pipe should produce travel distance equal to run length.");
+        }
+
+        [Test]
+        public void WaterArrowPathIncludesTurns()
+        {
+            var grid = CreateGrid(3, 2);
+            var sim = CreateSimulationManager(grid);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 50f);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(2, 1), 25f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var occupied = new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0),
+                new Vector2Int(1, 1),
+                new Vector2Int(2, 1)
+            };
+
+            var pipe = CreatePipe(source, sink, 50f, occupied);
+            Assert.IsTrue(grid.AddPipeRun(pipe.occupiedCells, pipe));
+
+            var capturedArrows = new List<SimulationManager.WaterFlowArrow>();
+            sim.WaterFlowUpdated += arrows =>
+            {
+                capturedArrows = arrows == null
+                    ? new List<SimulationManager.WaterFlowArrow>()
+                    : new List<SimulationManager.WaterFlowArrow>(arrows);
+            };
+
+            RunWaterStep(sim);
+
+            Assert.AreEqual(1, capturedArrows.Count, "Turned pipe should still render a single arrow.");
+
+            var arrow = capturedArrows[0];
+            Assert.AreEqual(pipe.occupiedCells.Count, arrow.Path.Length, "Arrow path should include every cell in the run.");
+
+            for (int i = 0; i < pipe.occupiedCells.Count; i++)
+            {
+                Vector3 expected = grid.CellToWorld(pipe.occupiedCells[i]);
+                Assert.That(arrow.Path[i], Is.EqualTo(expected).Within(0.0001f),
+                    $"Arrow path point {i} should align with pipe cell {pipe.occupiedCells[i]}.");
+            }
+        }
+
+        [Test]
         public void UnconnectedWaterPortGeneratesLeak()
         {
             var grid = CreateGrid(1, 1);
@@ -194,6 +288,19 @@ namespace MachineRepair.Tests
             pipe.fillLevel = 0f;
 
             return pipe;
+        }
+
+        private float CalculatePathLength(GridManager grid, IReadOnlyList<Vector2Int> cells)
+        {
+            float length = 0f;
+            if (grid == null || cells == null) return length;
+
+            for (int i = 0; i < cells.Count - 1; i++)
+            {
+                length += Vector3.Distance(grid.CellToWorld(cells[i]), grid.CellToWorld(cells[i + 1]));
+            }
+
+            return length;
         }
 
         private float GetComponentFill(SimulationManager sim, MachineComponent component)
