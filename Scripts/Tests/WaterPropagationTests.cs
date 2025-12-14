@@ -15,7 +15,7 @@ namespace MachineRepair.Tests
 
         private class SilentGridManager : GridManager
         {
-            public new void Awake()
+            private void Awake()
             {
                 // Prevent automatic InitGrids; tests configure explicitly.
             }
@@ -93,7 +93,7 @@ namespace MachineRepair.Tests
             createdObjects.Add(tilemapGO);
 
             tilemapGO.transform.SetParent(gridGO.transform);
-            tilemapGO.AddComponent<Grid>();
+            tilemapGO.AddComponent<UnityEngine.Grid>();
             var tilemap = tilemapGO.AddComponent<Tilemap>();
 
             var gridManager = gridGO.AddComponent<SilentGridManager>();
@@ -225,13 +225,13 @@ namespace MachineRepair.Tests
             var baseField = typeof(GridManager).GetField("basePlaceabilityByIndex", BindingFlags.NonPublic | BindingFlags.Instance);
 
             var terrain = terrainField?.GetValue(grid) as MachineRepair.Grid.CellTerrain[];
-            var basePlaceability = baseField?.GetValue(grid) as MachineRepair.Grid.CellPlaceability[];
+            var basePlaceability = baseField?.GetValue(grid) as MachineRepair.CellPlaceability[];
 
             if (terrain != null)
             {
                 for (int i = 0; i < terrain.Length; i++)
                 {
-                    terrain[i].placeability = MachineRepair.Grid.CellPlaceability.Placeable;
+                    terrain[i].placeability = MachineRepair.CellPlaceability.Placeable;
                 }
             }
 
@@ -239,7 +239,7 @@ namespace MachineRepair.Tests
             {
                 for (int i = 0; i < basePlaceability.Length; i++)
                 {
-                    basePlaceability[i] = MachineRepair.Grid.CellPlaceability.Placeable;
+                    basePlaceability[i] = MachineRepair.CellPlaceability.Placeable;
                 }
             }
         }
