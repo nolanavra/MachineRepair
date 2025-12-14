@@ -26,6 +26,8 @@ namespace MachineRepair.EditorTools
         private bool dragState = true;  // paint or erase during drag
         private bool dragAffectsDisplay = false;
 
+        private Vector2Int previousFootprintSize = new Vector2Int(-1, -1);
+
         [MenuItem("Tools/Espresso/Footprint Painter")]
         public static void Open()
         {
@@ -188,14 +190,25 @@ namespace MachineRepair.EditorTools
             if (def == null)
             {
                 previousDef = null;
+                previousFootprintSize = new Vector2Int(-1, -1);
                 return;
             }
 
-            if (previousDef != def)
+            var defSize = new Vector2Int(Mathf.Max(1, def.footprintMask.width), Mathf.Max(1, def.footprintMask.height));
+
+            bool defChanged = previousDef != def;
+            bool sizeChanged = defChanged || previousFootprintSize != defSize;
+
+            if (defChanged)
             {
-                footprintSizeInput.x = Mathf.Max(1, def.footprintMask.width);
-                footprintSizeInput.y = Mathf.Max(1, def.footprintMask.height);
                 previousDef = def;
+            }
+
+            if (sizeChanged)
+            {
+                footprintSizeInput = defSize;
+                previousFootprintSize = defSize;
+                Repaint();
             }
         }
 
