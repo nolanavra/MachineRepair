@@ -49,6 +49,90 @@ guardrails:
   - Simulations must be deterministic unless explicitly told otherwise.
   - Do not rewrite working systems wholesale during iteration; evolve them.
 
+component_definition_guardrails: |
+  guardrails:
+    # Component Definition Source-of-Truth
+    - ThingDef is the canonical source of truth for component identity, simulation capabilities, footprint/ports, and UI strings.
+    - Prefabs are visual shells only (renderer, colliders, optional view scripts). Prefabs MUST NOT author footprint, origin, or ports.
+    - At runtime, component prefabs MUST pull anchor/origin, footprint mask, and port definitions from ThingDef.
+
+    # REQUIRED DATA SCHEMAS (authoring + runtime)
+    - Enforce these structures exactly. Any missing field is an error. Any extra field must be justified in comments.
+
+    # ThingDef (ScriptableObject) required fields
+    - ThingDef MUST contain:
+        - defName: string        # stable ID used in scripts and saves
+        - displayName: string
+        - description: string
+
+        - componentType: ComponentType   # enum defining which behavior scripts are instantiated
+        - footprintMask: FootprintMask        # defines worldspace occupancy and ports
+
+        - water: bool = false
+        - power: bool = false
+        - signals: bool = false
+
+    # Conditional sub-structures
+    - If ThingDef.water == true, ThingDef MUST also contain:
+        - maxPressure: float
+        - volume: float
+        - fillLevel: float
+
+    - If ThingDef.power == true, ThingDef MUST also contain:
+        - wattage: float
+        - voltage: float
+        - AC: bool = true
+
+    - If ThingDef.signals == true, ThingDef MUST also contain:
+        - Rx: bool
+        - Tx: bool
+        - CompPortInteraction: bool
+
+    # PortLocal (struct) required fields
+    - PortLocal MUST contain:
+        - cell: Vector2Int
+        - portType: PortType
+        - internalConnectionIndices: int[]   # indices into owning PortDef.ports array
+
+    - If PortLocal.portType == water, PortLocal MUST also contain:
+        - flowrateMax: float
+
+    # PortDef (struct/class) required fields
+    - PortDef MUST contain:
+        - ports: PortLocal[]
+
+    # FootprintMask (struct/class) required fields
+    - FootprintMask MUST contain:
+        - width: int
+        - height: int
+        - origin: Vector2Int
+        - occupied: bool[]   # length == width * height
+        - display: bool[]    # length == width * height
+        - connectedPorts: PortDef
+
+    # INVARIANTS / VALIDATION (editor-time + runtime)
+    - defName MUST be unique across all ThingDefs and MUST remain stable for save/load.
+    - footprintMask.occupied and footprintMask.display MUST be non-null and length == width * height.
+    - footprintMask.origin MUST be within bounds [0..width-1, 0..height-1].
+    - Every PortLocal.cell MUST be within footprint bounds.
+    - Every value in internalConnectionIndices MUST:
+        - be >= 0
+        - be < connectedPorts.ports.Length
+        - NOT reference itself
+    - Internal connections MUST be symmetric (if A connects to B, B must connect to A).
+    - If ThingDef.water == false, water-only fields MUST NOT be serialized or used.
+    - If ThingDef.power == false, power-only fields MUST NOT be serialized or used.
+    - If ThingDef.signals == false, signal-only fields MUST NOT be serialized or used.
+
+    # IMPLEMENTATION RULES
+    - Placement, footprint checks, port queries, and global port coordinate conversion MUST use ThingDef.footprintMask as the source.
+    - Runtime component instances MUST store:
+        - ThingDef reference (or defName)
+        - placed origin cell in world grid
+        - rotation/mirror (if supported)
+        - runtime state (fillLevel, powered state, etc.)
+      and MUST NOT duplicate static definition data except as cached derived data.
+
 agent_persona:
   title: MachineRepair Unity Architect
   behaviors:
