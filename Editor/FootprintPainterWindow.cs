@@ -44,18 +44,18 @@ namespace MachineRepair.EditorTools
                 }
 
                 // Ensure array initialized
-                int w = Mathf.Max(1, def.footprint.width);
-                int h = Mathf.Max(1, def.footprint.height);
-                bool needsSizeFix = def.footprint.width != w || def.footprint.height != h;
-                bool needsOccupied = def.footprint.occupied == null || def.footprint.occupied.Length != w * h;
-                bool needsDisplay = def.footprint.display == null || def.footprint.display.Length != w * h;
+                int w = Mathf.Max(1, def.footprintMask.width);
+                int h = Mathf.Max(1, def.footprintMask.height);
+                bool needsSizeFix = def.footprintMask.width != w || def.footprintMask.height != h;
+                bool needsOccupied = def.footprintMask.occupied == null || def.footprintMask.occupied.Length != w * h;
+                bool needsDisplay = def.footprintMask.display == null || def.footprintMask.display.Length != w * h;
                 if (needsSizeFix || needsOccupied || needsDisplay)
                 {
                     Undo.RecordObject(def, "Init Footprint");
-                    def.footprint.width = w;
-                    def.footprint.height = h;
-                    if (needsOccupied) def.footprint.occupied = new bool[w * h];
-                    if (needsDisplay) def.footprint.display = new bool[w * h];
+                    def.footprintMask.width = w;
+                    def.footprintMask.height = h;
+                    if (needsOccupied) def.footprintMask.occupied = new bool[w * h];
+                    if (needsDisplay) def.footprintMask.display = new bool[w * h];
                     EditorUtility.SetDirty(def);
                 }
 
@@ -81,17 +81,17 @@ namespace MachineRepair.EditorTools
                     var cRect = new Rect(gridRect.x + x * cellPx, gridRect.y + (h-1-y) * cellPx, cellPx - 1f, cellPx - 1f); // flip y so 0,0 is bottom-left
 
                     // Fill
-                    Color fill = def.footprint.occupied[idx] ? new Color(0.25f, 0.65f, 0.35f, 1f) : new Color(0.10f, 0.10f, 0.10f, 1f);
+                    Color fill = def.footprintMask.occupied[idx] ? new Color(0.25f, 0.65f, 0.35f, 1f) : new Color(0.10f, 0.10f, 0.10f, 1f);
                     EditorGUI.DrawRect(cRect, fill);
 
-                    if (def.footprint.display != null && def.footprint.display[idx])
+                    if (def.footprintMask.display != null && def.footprintMask.display[idx])
                     {
                         var displayColor = new Color(0.30f, 0.55f, 0.95f, 0.35f);
                         EditorGUI.DrawRect(cRect, displayColor);
                     }
 
                     // Origin marker
-                    if (def.footprint.origin.x == x && def.footprint.origin.y == y)
+                    if (def.footprintMask.origin.x == x && def.footprintMask.origin.y == y)
                     {
                         var oRect = new Rect(cRect.x + 4, cRect.y + 4, cRect.width - 8, cRect.height - 8);
                         EditorGUI.DrawRect(oRect, new Color(0.9f, 0.8f, 0.25f, 1f));
@@ -128,10 +128,10 @@ namespace MachineRepair.EditorTools
             {
                 // Size controls
                 EditorGUILayout.LabelField("Width", GUILayout.Width(40));
-                int newW = EditorGUILayout.IntField(def.footprint.width, GUILayout.Width(40));
+                int newW = EditorGUILayout.IntField(def.footprintMask.width, GUILayout.Width(40));
                 EditorGUILayout.LabelField("Height", GUILayout.Width(45));
-                int newH = EditorGUILayout.IntField(def.footprint.height, GUILayout.Width(40));
-                if (newW != def.footprint.width || newH != def.footprint.height)
+                int newH = EditorGUILayout.IntField(def.footprintMask.height, GUILayout.Width(40));
+                if (newW != def.footprintMask.width || newH != def.footprintMask.height)
                 {
                     newW = Mathf.Max(1, newW);
                     newH = Mathf.Max(1, newH);
@@ -155,19 +155,19 @@ namespace MachineRepair.EditorTools
                 if (GUILayout.Button("Clear", EditorStyles.toolbarButton, GUILayout.Width(50)))
                 {
                     Undo.RecordObject(def, "Clear Footprint");
-                    for (int i = 0; i < def.footprint.occupied.Length; i++) def.footprint.occupied[i] = false;
+                    for (int i = 0; i < def.footprintMask.occupied.Length; i++) def.footprintMask.occupied[i] = false;
                     EditorUtility.SetDirty(def);
                 }
                 if (GUILayout.Button("Fill", EditorStyles.toolbarButton, GUILayout.Width(40)))
                 {
                     Undo.RecordObject(def, "Fill Footprint");
-                    for (int i = 0; i < def.footprint.occupied.Length; i++) def.footprint.occupied[i] = true;
+                    for (int i = 0; i < def.footprintMask.occupied.Length; i++) def.footprintMask.occupied[i] = true;
                     EditorUtility.SetDirty(def);
                 }
                 if (GUILayout.Button("Invert", EditorStyles.toolbarButton, GUILayout.Width(55)))
                 {
                     Undo.RecordObject(def, "Invert Footprint");
-                    for (int i = 0; i < def.footprint.occupied.Length; i++) def.footprint.occupied[i] = !def.footprint.occupied[i];
+                    for (int i = 0; i < def.footprintMask.occupied.Length; i++) def.footprintMask.occupied[i] = !def.footprintMask.occupied[i];
                     EditorUtility.SetDirty(def);
                 }
             }
@@ -176,10 +176,10 @@ namespace MachineRepair.EditorTools
         void ResizeFootprint(int newW, int newH)
         {
             Undo.RecordObject(def, "Resize Footprint");
-            bool[] old = def.footprint.occupied ?? new bool[0];
-            bool[] oldDisplay = def.footprint.display ?? new bool[0];
-            int oldW = def.footprint.width;
-            int oldH = def.footprint.height;
+            bool[] old = def.footprintMask.occupied ?? new bool[0];
+            bool[] oldDisplay = def.footprintMask.display ?? new bool[0];
+            int oldW = def.footprintMask.width;
+            int oldH = def.footprintMask.height;
 
             var next = new bool[newW * newH];
             var nextDisplay = new bool[newW * newH];
@@ -192,14 +192,14 @@ namespace MachineRepair.EditorTools
                 nextDisplay[newIdx] = oldIdx < oldDisplay.Length && oldDisplay[oldIdx];
             }
 
-            def.footprint.width = newW;
-            def.footprint.height = newH;
-            def.footprint.occupied = next;
-            def.footprint.display = nextDisplay;
+            def.footprintMask.width = newW;
+            def.footprintMask.height = newH;
+            def.footprintMask.occupied = next;
+            def.footprintMask.display = nextDisplay;
 
             // Clamp origin
-            def.footprint.origin.x = Mathf.Clamp(def.footprint.origin.x, 0, newW - 1);
-            def.footprint.origin.y = Mathf.Clamp(def.footprint.origin.y, 0, newH - 1);
+            def.footprintMask.origin.x = Mathf.Clamp(def.footprintMask.origin.x, 0, newW - 1);
+            def.footprintMask.origin.y = Mathf.Clamp(def.footprintMask.origin.y, 0, newH - 1);
 
             EditorUtility.SetDirty(def);
         }
@@ -272,7 +272,7 @@ namespace MachineRepair.EditorTools
         void PaintCell(int idx, bool state)
         {
             Undo.RecordObject(def, "Paint Footprint");
-            def.footprint.occupied[idx] = state;
+            def.footprintMask.occupied[idx] = state;
             EditorUtility.SetDirty(def);
             Repaint();
         }
@@ -280,7 +280,7 @@ namespace MachineRepair.EditorTools
         void PaintDisplayCell(int idx, bool state)
         {
             Undo.RecordObject(def, "Paint Display Footprint");
-            def.footprint.display[idx] = state;
+            def.footprintMask.display[idx] = state;
             EditorUtility.SetDirty(def);
             Repaint();
         }
@@ -288,7 +288,7 @@ namespace MachineRepair.EditorTools
         void SetOrigin(Vector2Int cell)
         {
             Undo.RecordObject(def, "Set Origin");
-            def.footprint.origin = cell;
+            def.footprintMask.origin = cell;
             EditorUtility.SetDirty(def);
             Repaint();
         }
