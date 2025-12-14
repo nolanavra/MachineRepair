@@ -22,6 +22,7 @@ namespace MachineRepair.EditorTools
         private PortType selectedType = PortType.Power;
 
         private bool showList = true;
+        private bool showConnections = true;
 
         private static readonly Color gridBg = new Color(0.16f, 0.16f, 0.16f, 1f);
         private static readonly Color gridDark = new Color(0.12f, 0.12f, 0.12f, 1f);
@@ -64,6 +65,8 @@ namespace MachineRepair.EditorTools
                     EditorGUILayout.HelpBox("This ComponentDef has no Port Set yet. Click the button above to create one.", MessageType.Warning);
                     return;
                 }
+
+                EnsureConnectionArrays();
 
                 // Ensure footprint grid initialized
                 int w = Mathf.Max(1, def.footprintMask.width);
@@ -133,6 +136,7 @@ namespace MachineRepair.EditorTools
                 EditorGUILayout.EndScrollView();
 
                 DrawPortList();
+                DrawConnectionEditor();
             }
         }
 
@@ -150,6 +154,7 @@ namespace MachineRepair.EditorTools
 
                 GUILayout.FlexibleSpace();
                 showList = GUILayout.Toggle(showList, "Show List", EditorStyles.toolbarButton, GUILayout.Width(80));
+                showConnections = GUILayout.Toggle(showConnections, "Connections", EditorStyles.toolbarButton, GUILayout.Width(110));
             }
 
             EditorGUILayout.Space(3);
@@ -211,29 +216,82 @@ namespace MachineRepair.EditorTools
         void RemovePort(Vector2Int cell, PortType type)
         {
             if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
-            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
-            int removed = list.RemoveAll(p => p.cell == cell && p.portType == type);
-            if (removed > 0)
+            var ports = def.footprintMask.connectedPorts.ports;
+            var removed = new List<int>();
+            for (int i = 0; i < ports.Length; i++)
             {
-                Undo.RecordObject(def.footprintMask.connectedPorts, "Remove Port");
-                def.footprintMask.connectedPorts.ports = list.ToArray();
-                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
-                Repaint();
+                var p = ports[i];
+                if (p.cell == cell && p.portType == type)
+                {
+                    removed.Add(i);
+                }
+            }
+
+            if (removed.Count > 0)
+            {
+                RebuildPortsRemovingIndices(ports, removed, "Remove Port");
             }
         }
 
         void RemoveAllPortsAt(Vector2Int cell)
         {
             if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
-            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
-            int removed = list.RemoveAll(p => p.cell == cell);
-            if (removed > 0)
+            var ports = def.footprintMask.connectedPorts.ports;
+            var removed = new List<int>();
+            for (int i = 0; i < ports.Length; i++)
             {
-                Undo.RecordObject(def.footprintMask.connectedPorts, "Remove Ports");
-                def.footprintMask.connectedPorts.ports = list.ToArray();
-                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
-                Repaint();
+                if (ports[i].cell == cell)
+                {
+                    removed.Add(i);
+                }
             }
+
+            if (removed.Count > 0)
+            {
+                RebuildPortsRemovingIndices(ports, removed, "Remove Ports");
+            }
+        }
+
+        void RebuildPortsRemovingIndices(PortLocal[] original, List<int> removedIndices, string undoLabel)
+        {
+            if (removedIndices == null || removedIndices.Count == 0) return;
+
+            var removedSet = new HashSet<int>(removedIndices);
+            var survivors = new List<PortLocal>();
+            var indexMap = new Dictionary<int, int>();
+
+            for (int i = 0; i < original.Length; i++)
+            {
+                if (removedSet.Contains(i)) continue;
+                indexMap[i] = survivors.Count;
+                survivors.Add(original[i]);
+            }
+
+            for (int i = 0; i < survivors.Count; i++)
+            {
+                var port = survivors[i];
+                var nextConnections = new List<int>();
+                var existing = port.internalConnectionIndices ?? Array.Empty<int>();
+                for (int c = 0; c < existing.Length; c++)
+                {
+                    int target = existing[c];
+                    if (removedSet.Contains(target))
+                        continue;
+
+                    if (indexMap.TryGetValue(target, out var mapped) && !nextConnections.Contains(mapped))
+                    {
+                        nextConnections.Add(mapped);
+                    }
+                }
+
+                port.internalConnectionIndices = nextConnections.ToArray();
+                survivors[i] = port;
+            }
+
+            Undo.RecordObject(def.footprintMask.connectedPorts, undoLabel);
+            def.footprintMask.connectedPorts.ports = survivors.ToArray();
+            EditorUtility.SetDirty(def.footprintMask.connectedPorts);
+            Repaint();
         }
 
         void DrawPortMarker(Rect gridRect, int w, int h, PortLocal p)
@@ -310,16 +368,131 @@ namespace MachineRepair.EditorTools
                         }
                         if (GUILayout.Button("Delete", GUILayout.Width(70)))
                         {
-                            Undo.RecordObject(def.footprintMask.connectedPorts, "Delete Port");
-                            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
-                            list.RemoveAt(i);
-                            def.footprintMask.connectedPorts.ports = list.ToArray();
-                            EditorUtility.SetDirty(def.footprintMask.connectedPorts);
+                            RemovePortAtIndex(i);
                             GUIUtility.ExitGUI();
                             return;
                         }
                     }
                 }
+            }
+        }
+
+        void DrawConnectionEditor()
+        {
+            if (!showConnections) return;
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
+
+            var ports = def.footprintMask.connectedPorts.ports;
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("Intra-Component Connections", EditorStyles.boldLabel);
+
+            if (ports.Length < 2)
+            {
+                EditorGUILayout.HelpBox("Add at least two ports to define internal connections.", MessageType.Info);
+                return;
+            }
+
+            using (new EditorGUILayout.VerticalScope("box"))
+            {
+                for (int i = 0; i < ports.Length; i++)
+                {
+                    var port = ports[i];
+                    EditorGUILayout.LabelField($"[{i}] {port.portType} at ({port.cell.x},{port.cell.y})");
+                    using (new EditorGUI.IndentLevelScope())
+                    {
+                        for (int t = 0; t < ports.Length; t++)
+                        {
+                            if (t == i) continue;
+
+                            var target = ports[t];
+                            var connections = port.internalConnectionIndices ?? Array.Empty<int>();
+                            bool hasConnection = Array.Exists(connections, idx => idx == t);
+                            bool next = EditorGUILayout.ToggleLeft($"Connect to [{t}] {target.portType} ({target.cell.x},{target.cell.y})", hasConnection);
+                            if (next != hasConnection)
+                            {
+                                ToggleConnection(i, t, next);
+                                port = def.footprintMask.connectedPorts.ports[i];
+                            }
+                        }
+                    }
+                    EditorGUILayout.Space(2);
+                }
+            }
+        }
+
+        void RemovePortAtIndex(int index)
+        {
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
+            var ports = def.footprintMask.connectedPorts.ports;
+            if (index < 0 || index >= ports.Length) return;
+
+            RebuildPortsRemovingIndices(ports, new List<int> { index }, "Delete Port");
+        }
+
+        void ToggleConnection(int sourceIndex, int targetIndex, bool shouldConnect)
+        {
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
+            var ports = def.footprintMask.connectedPorts.ports;
+
+            bool changed = false;
+            changed |= UpdateConnectionForIndex(sourceIndex, targetIndex, shouldConnect, ports);
+            changed |= UpdateConnectionForIndex(targetIndex, sourceIndex, shouldConnect, ports);
+
+            if (changed)
+            {
+                Undo.RecordObject(def.footprintMask.connectedPorts, shouldConnect ? "Connect Ports" : "Disconnect Ports");
+                def.footprintMask.connectedPorts.ports = ports;
+                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
+                Repaint();
+            }
+        }
+
+        bool UpdateConnectionForIndex(int sourceIndex, int targetIndex, bool shouldConnect, PortLocal[] ports)
+        {
+            if (sourceIndex < 0 || sourceIndex >= ports.Length) return false;
+            var port = ports[sourceIndex];
+            var connections = new List<int>(port.internalConnectionIndices ?? Array.Empty<int>());
+            bool contains = connections.Contains(targetIndex);
+
+            if (shouldConnect && !contains)
+            {
+                connections.Add(targetIndex);
+            }
+            else if (!shouldConnect && contains)
+            {
+                connections.Remove(targetIndex);
+            }
+            else
+            {
+                return false;
+            }
+
+            port.internalConnectionIndices = connections.ToArray();
+            ports[sourceIndex] = port;
+            return true;
+        }
+
+        void EnsureConnectionArrays()
+        {
+            if (def?.footprintMask.connectedPorts?.ports == null) return;
+            var ports = def.footprintMask.connectedPorts.ports;
+            bool changed = false;
+            for (int i = 0; i < ports.Length; i++)
+            {
+                if (ports[i].internalConnectionIndices == null)
+                {
+                    var p = ports[i];
+                    p.internalConnectionIndices = Array.Empty<int>();
+                    ports[i] = p;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                Undo.RecordObject(def.footprintMask.connectedPorts, "Initialize Port Connections");
+                def.footprintMask.connectedPorts.ports = ports;
+                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
             }
         }
 
