@@ -675,9 +675,34 @@ namespace MachineRepair.Grid
             return true;
         }
 
+        private bool TryToggleSwitchUnderPointer()
+        {
+            if (cam == null) return false;
+
+            Vector3 worldPoint = cam.ScreenToWorldPoint(new Vector3(pointerScreenPosition.x, pointerScreenPosition.y, 0f));
+            worldPoint.z = 0f;
+
+            Collider2D hit = Physics2D.OverlapPoint(worldPoint);
+            if (hit == null) return false;
+
+            SwitchComponent switchComponent = hit.GetComponentInParent<SwitchComponent>();
+            if (switchComponent == null) return false;
+
+            switchComponent.Toggle();
+            SelectionChanged?.Invoke(CurrentSelection);
+            LogInputEvent("Toggled switch via collision box click");
+
+            return true;
+        }
+
         private void OnPrimaryClickPerformed(InputAction.CallbackContext ctx)
         {
             if (!ctx.performed || !CanProcessPointerInput()) return;
+
+            if (TryToggleSwitchUnderPointer())
+            {
+                return;
+            }
 
             cellDef cell = GetMouseCell();
             Vector2Int pos = GetMousePos();
