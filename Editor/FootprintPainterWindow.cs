@@ -13,11 +13,14 @@ namespace MachineRepair.EditorTools
     public class FootprintPainterWindow : EditorWindow
     {
         private ThingDef def;
+        private ThingDef previousDef;
         private Vector2 scroll;
         private float cellPx = 22f;         // pixel size of a cell in the painter
         private float gridPadding = 8f;
         private enum ToolMode { Paint, Erase, DisplayPaint, DisplayErase, Origin }
         private ToolMode mode = ToolMode.Paint;
+
+        private Vector2Int footprintSizeInput = new Vector2Int(1, 1);
 
         private bool dragActive = false;
         private bool dragState = true;  // paint or erase during drag
@@ -36,6 +39,8 @@ namespace MachineRepair.EditorTools
             {
                 EditorGUILayout.Space(2);
                 def = (ThingDef)EditorGUILayout.ObjectField("Component Def", def, typeof(ThingDef), false);
+
+                SyncFootprintSizeInput();
 
                 if (def == null)
                 {
@@ -59,7 +64,10 @@ namespace MachineRepair.EditorTools
                     EditorUtility.SetDirty(def);
                 }
 
-                DrawToolbar(ref w, ref h);
+                DrawFootprintSizeControls();
+                w = Mathf.Max(1, def.footprintMask.width);
+                h = Mathf.Max(1, def.footprintMask.height);
+                DrawToolbar();
 
                 // Grid area
                 var areaHeight = h * cellPx + gridPadding * 2f + 2f;
@@ -122,27 +130,29 @@ namespace MachineRepair.EditorTools
             }
         }
 
-        void DrawToolbar(ref int w, ref int h)
+        void DrawFootprintSizeControls()
+        {
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Footprint Size", EditorStyles.boldLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                footprintSizeInput.x = Mathf.Max(1, EditorGUILayout.IntField("Width", footprintSizeInput.x));
+                footprintSizeInput.y = Mathf.Max(1, EditorGUILayout.IntField("Height", footprintSizeInput.y));
+
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Apply Size", GUILayout.Width(90)))
+                {
+                    ResizeFootprint(footprintSizeInput.x, footprintSizeInput.y);
+                    SyncFootprintSizeInput();
+                }
+            }
+            EditorGUILayout.Space(6);
+        }
+
+        void DrawToolbar()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                // Size controls
-                EditorGUILayout.LabelField("Width", GUILayout.Width(40));
-                int newW = EditorGUILayout.IntField(def.footprintMask.width, GUILayout.Width(40));
-                EditorGUILayout.LabelField("Height", GUILayout.Width(45));
-                int newH = EditorGUILayout.IntField(def.footprintMask.height, GUILayout.Width(40));
-                if (newW != def.footprintMask.width || newH != def.footprintMask.height)
-                {
-                    newW = Mathf.Max(1, newW);
-                    newH = Mathf.Max(1, newH);
-                    if (GUILayout.Button("Apply Size", EditorStyles.toolbarButton, GUILayout.Width(80)))
-                    {
-                        ResizeFootprint(newW, newH);
-                    }
-                }
-
-                GUILayout.FlexibleSpace();
-
                 // Tool mode
                 mode = (ToolMode)EditorGUILayout.EnumPopup(mode, GUILayout.Width(110));
 
@@ -170,6 +180,22 @@ namespace MachineRepair.EditorTools
                     for (int i = 0; i < def.footprintMask.occupied.Length; i++) def.footprintMask.occupied[i] = !def.footprintMask.occupied[i];
                     EditorUtility.SetDirty(def);
                 }
+            }
+        }
+
+        void SyncFootprintSizeInput()
+        {
+            if (def == null)
+            {
+                previousDef = null;
+                return;
+            }
+
+            if (previousDef != def)
+            {
+                footprintSizeInput.x = Mathf.Max(1, def.footprintMask.width);
+                footprintSizeInput.y = Mathf.Max(1, def.footprintMask.height);
+                previousDef = def;
             }
         }
 
