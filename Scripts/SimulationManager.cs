@@ -26,11 +26,15 @@ namespace MachineRepair
         [SerializeField] private bool waterOn = true;
         [Tooltip("Whether the simulation loop is currently advancing.")]
         [SerializeField] private bool simulationRunning;
+        [Header("Visualization")]
+        [Tooltip("Seconds between spawning water flow arrows. Set to 0 to spawn every time flow advances.")]
+        [SerializeField] private float waterArrowSpawnIntervalSeconds = 0.15f;
         [Header("Debugging")]
         [Tooltip("Log water flow arrow instantiation for debugging hydraulic paths.")]
         [SerializeField] private bool logWaterFlowPaths = false;
 
         private float stepTimer;
+        private float waterArrowSpawnTimer;
         private int simulationStepCount;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
@@ -108,10 +112,17 @@ namespace MachineRepair
         private void Awake()
         {
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
+
+            ResetWaterArrowTimer();
         }
 
         private void Update()
         {
+            if (waterOn)
+            {
+                waterArrowSpawnTimer += Time.deltaTime;
+            }
+
             if (!autorun) return;
             if (!simulationRunning)
             {
@@ -157,6 +168,7 @@ namespace MachineRepair
 
             simulationRunning = shouldRun;
             stepTimer = 0f;
+            ResetWaterArrowTimer();
             SimulationRunStateChanged?.Invoke(simulationRunning);
         }
 
@@ -189,6 +201,7 @@ namespace MachineRepair
 
             waterOn = enabled;
             stepTimer = 0f;
+            ResetWaterArrowTimer();
             WaterToggled?.Invoke(waterOn);
 
             ClearWaterFlowArrows();
@@ -1199,7 +1212,7 @@ namespace MachineRepair
                     StampPipeFlow(pipe, applied, stepsFromSource + 1);
 
                     var nextCell = GetPipeNextStep(pipe, portRef.Cell);
-                    if (nextCell.HasValue && ShouldSpawnWaterArrow(stepsFromSource + 1))
+                    if (nextCell.HasValue && ShouldSpawnWaterArrow())
                     {
                         AddWaterFlowArrowSegments(pipe, portRef.Cell, applied);
                     }
@@ -1260,7 +1273,7 @@ namespace MachineRepair
                     StepsFromSource = stepsFromSource + 1
                 });
 
-                if (ShouldSpawnWaterArrow(stepsFromSource + 1))
+                if (ShouldSpawnWaterArrow())
                 {
                     float pressure = portRef.Component?.def?.maxPressure ?? 0f;
                     AddWaterFlowArrow(portRef.Cell, targetCell, flowOut, pressure, 1f, 0);
@@ -1350,7 +1363,7 @@ namespace MachineRepair
                     StepsFromSource = stepsFromSource
                 });
 
-                if (ShouldSpawnWaterArrow(stepsFromSource))
+                if (ShouldSpawnWaterArrow())
                 {
                     AddWaterFlowArrowSegments(pipe, fromCell, availableFlow);
                 }
@@ -1457,9 +1470,25 @@ namespace MachineRepair
             }
         }
 
-        private static bool ShouldSpawnWaterArrow(int stepsFromSource)
+        private bool ShouldSpawnWaterArrow()
         {
-            return stepsFromSource > 0 && stepsFromSource % 4 == 0;
+            if (waterArrowSpawnIntervalSeconds <= 0f)
+            {
+                return true;
+            }
+
+            if (waterArrowSpawnTimer >= waterArrowSpawnIntervalSeconds)
+            {
+                waterArrowSpawnTimer = 0f;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void ResetWaterArrowTimer()
+        {
+            waterArrowSpawnTimer = Mathf.Max(waterArrowSpawnIntervalSeconds, 0f);
         }
 
         private bool IsWaterSupplyComponent(cellDef cell)
