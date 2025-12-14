@@ -93,9 +93,16 @@ namespace MachineRepair
 
         public struct WaterFlowArrow
         {
-            public Vector3 Position;
+            public Vector3 StartPosition;
+            public Vector3 EndPosition;
             public Vector2 Direction;
             public float Speed;
+            public float SegmentLength;
+            public float Scale;
+            public float Progress;
+            public Vector2Int StartCell;
+            public Vector2Int EndCell;
+            public int SegmentIndex;
         }
 
         private void Awake()
@@ -1194,7 +1201,7 @@ namespace MachineRepair
                     var nextCell = GetPipeNextStep(pipe, portRef.Cell);
                     if (nextCell.HasValue && ShouldSpawnWaterArrow(stepsFromSource + 1))
                     {
-                        AddWaterFlowArrow(portRef.Cell, nextCell.Value, applied);
+                        AddWaterFlowArrowSegments(pipe, portRef.Cell, applied);
                     }
                 }
 
@@ -1255,7 +1262,8 @@ namespace MachineRepair
 
                 if (ShouldSpawnWaterArrow(stepsFromSource + 1))
                 {
-                    AddWaterFlowArrow(portRef.Cell, targetCell, flowOut);
+                    float pressure = portRef.Component?.def?.maxPressure ?? 0f;
+                    AddWaterFlowArrow(portRef.Cell, targetCell, flowOut, pressure, 1f, 0);
                 }
             }
         }
@@ -1344,7 +1352,7 @@ namespace MachineRepair
 
                 if (ShouldSpawnWaterArrow(stepsFromSource))
                 {
-                    AddWaterFlowArrow(fromCell, targetCell, availableFlow);
+                    AddWaterFlowArrowSegments(pipe, fromCell, availableFlow);
                 }
             }
             else
@@ -1353,25 +1361,99 @@ namespace MachineRepair
             }
         }
 
-        private void AddWaterFlowArrow(Vector2Int from, Vector2Int to, float flow)
+        private void AddWaterFlowArrow(Vector2Int from, Vector2Int to, float speed, float pressure, float progress, int segmentIndex)
         {
             if (grid == null) return;
 
             Vector2 direction = to - from;
             if (direction == Vector2.zero) return;
 
+            Vector3 start = grid.CellToWorld(from);
+            Vector3 end = grid.CellToWorld(to);
+            float length = Vector3.Distance(start, end);
+            float clampedProgress = Mathf.Clamp01(progress);
+
             var arrow = new WaterFlowArrow
             {
-                Position = grid.CellToWorld(from),
+                StartCell = from,
+                EndCell = to,
+                StartPosition = start,
+                EndPosition = end,
                 Direction = direction.normalized,
-                Speed = Mathf.Max(0f, flow)
+                Speed = Mathf.Max(0f, speed),
+                SegmentLength = length,
+                Scale = pressure / 9f,
+                Progress = clampedProgress,
+                SegmentIndex = segmentIndex
             };
 
             waterFlowArrows.Add(arrow);
 
             if (logWaterFlowPaths)
             {
-                Debug.Log($"[SimulationManager] Added water arrow from {from} toward {to} dir={arrow.Direction} speed={arrow.Speed:0.###}");
+                Debug.Log($"[SimulationManager] Added water arrow segment {segmentIndex} from {from} toward {to} dir={arrow.Direction} speed={arrow.Speed:0.###} len={length:0.###} scale={arrow.Scale:0.###} progress={arrow.Progress:0.###}");
+            }
+        }
+
+        private void AddWaterFlowArrowSegments(PlacedPipe pipe, Vector2Int originCell, float flow)
+        {
+            if (grid == null || pipe?.occupiedCells == null || pipe.occupiedCells.Count < 2) return;
+
+            EnsurePipeFlowrate(pipe);
+
+            bool originIsStart = originCell == pipe.startPortCell;
+            bool originIsEnd = originCell == pipe.endPortCell;
+
+            if (!originIsStart && !originIsEnd)
+            {
+                if (logWaterFlowPaths)
+                {
+                    Debug.LogWarning($"[SimulationManager] Cannot add water arrows: origin {originCell} is not part of pipe between {pipe.startPortCell} and {pipe.endPortCell}.");
+                }
+                return;
+            }
+
+            var orderedCells = new List<Vector2Int>(pipe.occupiedCells);
+            if (originIsEnd)
+            {
+                orderedCells.Reverse();
+            }
+
+            if (orderedCells.Count == 0 || orderedCells[0] != originCell)
+            {
+                if (logWaterFlowPaths)
+                {
+                    Debug.LogWarning($"[SimulationManager] Pipe occupancy ordering mismatch. Expected origin {originCell} at index 0 but found {orderedCells[0]}.");
+                }
+            }
+
+            int totalSegments = Mathf.Max(0, orderedCells.Count - 1);
+            int permittedSegments = totalSegments;
+
+            if (pipe.fillLevel < 100f - Mathf.Epsilon)
+            {
+                int halfwayIndex = totalSegments / 2;
+                permittedSegments = Mathf.Max(1, halfwayIndex + 1);
+            }
+
+            float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
+            float normalizedSpeed = pipe.flowrateMax > 0f ? Mathf.Clamp(flow / pipe.flowrateMax, 0f, 1f) : 0f;
+            float progress = Mathf.Clamp01(pipe.fillLevel / 100f);
+
+            for (int i = 0; i < totalSegments && i < permittedSegments; i++)
+            {
+                var start = orderedCells[i];
+                var end = orderedCells[i + 1];
+
+                if (Mathf.Abs(start.x - end.x) > 1 || Mathf.Abs(start.y - end.y) > 1)
+                {
+                    if (logWaterFlowPaths)
+                    {
+                        Debug.LogWarning($"[SimulationManager] Non-adjacent pipe segment detected between {start} and {end} (segment {i}).");
+                    }
+                }
+
+                AddWaterFlowArrow(start, end, normalizedSpeed, pressure, progress, i);
             }
         }
 
