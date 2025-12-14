@@ -210,7 +210,14 @@ namespace MachineRepair.EditorTools
 
             Undo.RecordObject(def.footprintMask.connectedPorts, "Add Port");
             var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
-            list.Add(new PortLocal { cell = cell, portType = type, internalConnectionIndices = Array.Empty<int>() });
+            float defaultFlowrate = type == PortType.Water ? 1f : 0f;
+            list.Add(new PortLocal
+            {
+                cell = cell,
+                portType = type,
+                internalConnectionIndices = Array.Empty<int>(),
+                flowrateMax = defaultFlowrate
+            });
             def.footprintMask.connectedPorts.ports = list.ToArray();
             EditorUtility.SetDirty(def.footprintMask.connectedPorts);
             Repaint();
@@ -374,6 +381,23 @@ namespace MachineRepair.EditorTools
                             RemovePortAtIndex(i);
                             GUIUtility.ExitGUI();
                             return;
+                        }
+                    }
+
+                    if (p.portType == PortType.Water)
+                    {
+                        using (new EditorGUI.IndentLevelScope())
+                        {
+                            EditorGUI.BeginChangeCheck();
+                            float nextFlow = EditorGUILayout.FloatField(new GUIContent("Max Flowrate", "Maximum flow rate for this water port."), p.flowrateMax > 0f ? p.flowrateMax : 1f);
+                            nextFlow = Mathf.Max(0.01f, nextFlow);
+                            if (EditorGUI.EndChangeCheck())
+                            {
+                                Undo.RecordObject(def.footprintMask.connectedPorts, "Edit Water Port Flowrate");
+                                p.flowrateMax = nextFlow;
+                                def.footprintMask.connectedPorts.ports[i] = p;
+                                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
+                            }
                         }
                     }
                 }
@@ -570,6 +594,14 @@ namespace MachineRepair.EditorTools
                 {
                     var p = ports[i];
                     p.internalConnectionIndices = Array.Empty<int>();
+                    ports[i] = p;
+                    changed = true;
+                }
+
+                if (ports[i].portType == PortType.Water && ports[i].flowrateMax <= 0f)
+                {
+                    var p = ports[i];
+                    p.flowrateMax = 1f;
                     ports[i] = p;
                     changed = true;
                 }
