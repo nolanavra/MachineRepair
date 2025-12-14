@@ -1371,6 +1371,56 @@ namespace MachineRepair
             }
         }
 
+        private void AddWaterFlowArrow(
+            Vector2Int startCell,
+            Vector2Int endCell,
+            float flow,
+            float pressure,
+            float scaleMultiplier,
+            float normalizedSpeed)
+        {
+            if (grid == null || startCell == endCell)
+            {
+                return;
+            }
+
+            Vector3 start = grid.CellToWorld(startCell);
+            Vector3 end = grid.CellToWorld(endCell);
+            float pathLength = Vector3.Distance(start, end);
+
+            if (pathLength <= 0.0001f)
+            {
+                return;
+            }
+
+            float scale = Mathf.Max(0.001f, (pressure / 9f) * Mathf.Max(0.001f, scaleMultiplier));
+            float speed = normalizedSpeed;
+
+            if (speed <= 0f && flow > 0f)
+            {
+                speed = Mathf.Clamp01(flow / Mathf.Max(pressure, 1f));
+            }
+
+            var arrow = new WaterFlowArrow
+            {
+                StartCell = startCell,
+                EndCell = endCell,
+                Path = new[] { start, end },
+                PathLength = pathLength,
+                TravelDistance = Mathf.Max(0.001f, pathLength),
+                Speed = Mathf.Max(0f, speed),
+                Scale = scale
+            };
+
+            waterFlowArrows.Add(arrow);
+
+            if (logWaterFlowPaths)
+            {
+                Debug.Log(
+                    $"[SimulationManager] Added direct water arrow start={startCell} end={endCell} len={pathLength:0.###} speed={arrow.Speed:0.###} scale={arrow.Scale:0.###}");
+            }
+        }
+
         private void AddWaterFlowArrowSegments(PlacedPipe pipe, Vector2Int originCell, float flow)
         {
             if (grid == null || pipe?.occupiedCells == null || pipe.occupiedCells.Count < 2) return;
