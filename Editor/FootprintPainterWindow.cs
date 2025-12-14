@@ -142,6 +142,12 @@ namespace MachineRepair.EditorTools
                 footprintSizeInput.y = Mathf.Max(1, EditorGUILayout.IntField("Height", footprintSizeInput.y));
 
                 GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Recompute Size", GUILayout.Width(120)))
+                {
+                    RecomputeFootprintBounds();
+                    SyncFootprintSizeInput();
+                }
+
                 if (GUILayout.Button("Apply Size", GUILayout.Width(90)))
                 {
                     ResizeFootprint(footprintSizeInput.x, footprintSizeInput.y);
@@ -241,6 +247,71 @@ namespace MachineRepair.EditorTools
             def.footprintMask.origin.y = Mathf.Clamp(def.footprintMask.origin.y, 0, newH - 1);
 
             EditorUtility.SetDirty(def);
+        }
+
+        void RecomputeFootprintBounds()
+        {
+            int w = Mathf.Max(1, def.footprintMask.width);
+            int h = Mathf.Max(1, def.footprintMask.height);
+
+            var clampedOrigin = new Vector2Int(
+                Mathf.Clamp(def.footprintMask.origin.x, 0, w - 1),
+                Mathf.Clamp(def.footprintMask.origin.y, 0, h - 1));
+
+            int minX = w - 1, minY = h - 1, maxX = 0, maxY = 0;
+
+            for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int idx = y * w + x;
+                bool occ = def.footprintMask.occupied != null && idx < def.footprintMask.occupied.Length && def.footprintMask.occupied[idx];
+                bool disp = def.footprintMask.display != null && idx < def.footprintMask.display.Length && def.footprintMask.display[idx];
+
+                if (occ || disp)
+                {
+                    minX = Mathf.Min(minX, x);
+                    minY = Mathf.Min(minY, y);
+                    maxX = Mathf.Max(maxX, x);
+                    maxY = Mathf.Max(maxY, y);
+                }
+            }
+
+            // Always keep the origin inside the new bounds
+            minX = Mathf.Min(minX, clampedOrigin.x);
+            minY = Mathf.Min(minY, clampedOrigin.y);
+            maxX = Mathf.Max(maxX, clampedOrigin.x);
+            maxY = Mathf.Max(maxY, clampedOrigin.y);
+
+            int newW = Mathf.Max(1, maxX - minX + 1);
+            int newH = Mathf.Max(1, maxY - minY + 1);
+
+            if (newW == w && newH == h && minX == 0 && minY == 0)
+                return;
+
+            Undo.RecordObject(def, "Recompute Footprint Size");
+
+            var next = new bool[newW * newH];
+            var nextDisplay = new bool[newW * newH];
+
+            for (int y = minY; y <= maxY; y++)
+            for (int x = minX; x <= maxX; x++)
+            {
+                int oldIdx = y * w + x;
+                int newIdx = (y - minY) * newW + (x - minX);
+                if (def.footprintMask.occupied != null && oldIdx < def.footprintMask.occupied.Length)
+                    next[newIdx] = def.footprintMask.occupied[oldIdx];
+                if (def.footprintMask.display != null && oldIdx < def.footprintMask.display.Length)
+                    nextDisplay[newIdx] = def.footprintMask.display[oldIdx];
+            }
+
+            def.footprintMask.width = newW;
+            def.footprintMask.height = newH;
+            def.footprintMask.occupied = next;
+            def.footprintMask.display = nextDisplay;
+            def.footprintMask.origin = new Vector2Int(clampedOrigin.x - minX, clampedOrigin.y - minY);
+
+            EditorUtility.SetDirty(def);
+            Repaint();
         }
 
         void HandleMouse(Rect gridRect, int w, int h)
