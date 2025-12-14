@@ -54,9 +54,11 @@ namespace MachineRepair
         private readonly List<Vector3> arrowDirections = new();
         private readonly List<float> arrowSpeeds = new();
         private readonly List<Vector3> arrowPreviousPositions = new();
+        private readonly List<float> arrowTravelDistances = new();
+        private readonly List<float> arrowScales = new();
         private int activeArrowCount;
         private float arrowSegmentLength = 1f;
-        private float arrowTravelDistance = 2f;
+        private float fallbackArrowTravelDistance = 2f;
         private readonly Dictionary<Vector2Int, SpriteRenderer> activeLeaks = new();
         private readonly Dictionary<Vector2Int, float> leakScaleByCell = new();
         private readonly Stack<SpriteRenderer> leakPool = new();
@@ -230,20 +232,35 @@ namespace MachineRepair
             {
                 var arrow = arrows[i];
                 var renderer = GetArrowRenderer(i);
-                Vector3 direction = arrow.Direction == Vector2.zero ? Vector3.right : ((Vector3)arrow.Direction).normalized;
+                Vector3 direction = arrow.Direction == Vector2.zero
+                    ? (arrow.EndPosition - arrow.StartPosition).normalized
+                    : ((Vector3)arrow.Direction).normalized;
+                if (direction == Vector3.zero) direction = Vector3.right;
 
-                arrowBasePositions[i] = arrow.Position;
+                float segmentLength = arrow.SegmentLength > 0.001f ? arrow.SegmentLength : arrowSegmentLength;
+                float travelDistance = Mathf.Max(0.001f, segmentLength * Mathf.Max(0.01f, arrow.Progress));
+                if (travelDistance <= 0.001f)
+                {
+                    travelDistance = fallbackArrowTravelDistance;
+                }
+
+                float scale = arrow.Scale > 0.001f ? arrow.Scale : 1f;
+
+                arrowBasePositions[i] = arrow.StartPosition;
                 arrowDirections[i] = direction;
                 arrowSpeeds[i] = Mathf.Max(0f, arrow.Speed);
-                arrowPreviousPositions[i] = arrow.Position;
+                arrowPreviousPositions[i] = arrow.StartPosition;
+                arrowTravelDistances[i] = travelDistance;
+                arrowScales[i] = scale;
 
-                renderer.transform.position = arrow.Position;
+                renderer.transform.position = arrow.StartPosition;
                 renderer.transform.up = direction;
-                renderer.enabled = ShouldShowArrows();
+                renderer.transform.localScale = new Vector3(scale, scale, 1f);
+                renderer.enabled = ShouldShowArrows() && travelDistance > 0.001f;
 
                 if (logWaterArrows)
                 {
-                    Debug.Log($"[SimulationUI] Arrow[{i}] pos={arrow.Position} dir={direction} speed={arrowSpeeds[i]:0.###} enabled={renderer.enabled}");
+                    Debug.Log($"[SimulationUI] Arrow[{i}] start={arrow.StartCell} end={arrow.EndCell} pos={arrow.StartPosition} dir={direction} speed={arrowSpeeds[i]:0.###} travel={travelDistance:0.###} scale={scale:0.###} enabled={renderer.enabled}");
                 }
             }
 
@@ -262,7 +279,10 @@ namespace MachineRepair
                 var renderer = arrowPool[i];
                 if (renderer == null || !renderer.enabled) continue;
 
-                float offset = Mathf.Repeat(Time.time * arrowScrollSpeed * arrowSpeeds[i], arrowTravelDistance);
+                float travelDistance = i < arrowTravelDistances.Count
+                    ? Mathf.Max(0.001f, arrowTravelDistances[i])
+                    : fallbackArrowTravelDistance;
+                float offset = Mathf.Repeat(Time.time * arrowScrollSpeed * arrowSpeeds[i], travelDistance);
                 Vector3 nextPosition = arrowBasePositions[i] + arrowDirections[i] * offset;
                 Vector3 travelDelta = nextPosition - arrowPreviousPositions[i];
                 Vector3 targetDirection = travelDelta.sqrMagnitude > 0.0001f
@@ -272,6 +292,8 @@ namespace MachineRepair
                 Quaternion targetRotation = Quaternion.LookRotation(Vector3.forward, targetDirection);
                 renderer.transform.rotation = Quaternion.RotateTowards(renderer.transform.rotation, targetRotation,
                     arrowRotationSpeed * Time.deltaTime);
+                float scale = i < arrowScales.Count ? arrowScales[i] : 1f;
+                renderer.transform.localScale = new Vector3(scale, scale, 1f);
                 renderer.transform.position = nextPosition;
                 arrowPreviousPositions[i] = nextPosition;
             }
@@ -310,6 +332,16 @@ namespace MachineRepair
             while (arrowPreviousPositions.Count < desiredSize)
             {
                 arrowPreviousPositions.Add(Vector3.zero);
+            }
+
+            while (arrowTravelDistances.Count < desiredSize)
+            {
+                arrowTravelDistances.Add(0f);
+            }
+
+            while (arrowScales.Count < desiredSize)
+            {
+                arrowScales.Add(1f);
             }
         }
 
@@ -555,7 +587,7 @@ namespace MachineRepair
         {
             arrowSegmentLength = Mathf.Max(0.001f, CalculateSegmentLength());
             float clampedCells = Mathf.Max(1f, arrowTravelCells);
-            arrowTravelDistance = arrowSegmentLength * clampedCells;
+            fallbackArrowTravelDistance = arrowSegmentLength * clampedCells;
         }
 
         private float CalculateSegmentLength()
