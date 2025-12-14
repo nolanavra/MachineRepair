@@ -34,8 +34,8 @@ namespace MachineRepair.Tests
 
             var switchDef = ScriptableObject.CreateInstance<ThingDef>();
             switchDef.displayName = "Switch";
-            switchDef.type = ComponentType.Switch;
-            switchDef.footprint = new FootprintMask
+            switchDef.componentType = ComponentType.Switch;
+            switchDef.footprintMask = new FootprintMask
             {
                 width = 1,
                 height = 1,
@@ -43,6 +43,8 @@ namespace MachineRepair.Tests
                 occupied = new[] { true },
                 display = new[] { false }
             };
+            switchDef.footprintMask.connectedPorts = ScriptableObject.CreateInstance<PortDef>();
+            switchDef.footprintMask.connectedPorts.ports = new PortLocal[0];
             createdObjects.Add(switchDef);
 
             MethodInfo attachMethod = typeof(GridManager).GetMethod(

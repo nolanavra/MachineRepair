@@ -178,7 +178,7 @@ namespace MachineRepair
 
             foreach (var port in portDef.ports)
             {
-                if (port.port != PortType.Power && port.port != PortType.Signal) continue;
+                if (port.portType != PortType.Power && port.portType != PortType.Signal) continue;
 
                 var globalPortCell = cell.component.GetGlobalCell(port);
                 if (globalPortCell == cellPos)

@@ -114,7 +114,7 @@ namespace MachineRepair {
                         continue;
 
                     var renderer = EnsurePortMarker(activeCount, markerSprite, sortingLayer, sortingOrder);
-                    renderer.color = ResolvePortColor(port.port, powerColor, waterColor, signalColor);
+                    renderer.color = ResolvePortColor(port.portType, powerColor, waterColor, signalColor);
                     renderer.transform.position = owningGrid.CellToWorld(cell);
                     renderer.transform.rotation = transform.rotation;
                     renderer.gameObject.SetActive(true);

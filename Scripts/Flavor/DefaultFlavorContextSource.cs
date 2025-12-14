@@ -48,7 +48,7 @@ namespace MachineRepair.Flavor
                     total++;
 
                     var def = component.def;
-                    ComponentType type = def != null ? def.type : ComponentType.None;
+                    ComponentType type = def != null ? def.componentType : ComponentType.None;
                     switch (type)
                     {
                         case ComponentType.Boiler:

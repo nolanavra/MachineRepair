@@ -192,7 +192,7 @@ namespace MachineRepair
 
             foreach (var port in portDef.ports)
             {
-                if (port.port != PortType.Water) continue;
+                if (port.portType != PortType.Water) continue;
 
                 var globalPortCell = cell.component.GetGlobalCell(port);
                 if (globalPortCell == cellPos)

@@ -255,12 +255,12 @@ namespace MachineRepair
                     for (int i = 0; i < cell.component.portDef.ports.Length; i++)
                     {
                         var port = cell.component.portDef.ports[i];
-                        if (port.port != PortType.Power) continue;
+                        if (port.portType != PortType.Power) continue;
 
                         Vector2Int global = cell.component.GetGlobalCell(port);
                         if (!grid.InBounds(global.x, global.y)) continue;
 
-                        float voltage = Mathf.Max(cell.component.def.maxACVoltage, cell.component.def.maxDCVoltage);
+                        float voltage = Mathf.Max(cell.component.def.voltage, 0f);
                         float current = voltage > 0f && cell.component.def.wattage > 0f
                             ? cell.component.def.wattage / voltage
                             : 0f;
@@ -271,14 +271,13 @@ namespace MachineRepair
                             Component = cell.component,
                             PortIndex = i,
                             Port = port,
-                            IsInput = port.isInput,
                             Voltage = voltage,
                             Current = current
                         };
 
                         portByCell[global] = powerPort;
 
-                        if (cell.component.def.type == ComponentType.ChassisPowerConnection)
+                        if (cell.component.def.componentType == ComponentType.ChassisPowerConnection)
                         {
                             chassisPorts.Add(powerPort);
                         }
@@ -346,32 +345,28 @@ namespace MachineRepair
 
             foreach (var kvp in portsByComponent)
             {
-                var inputs = new List<PowerPort>();
-                var outputs = new List<PowerPort>();
+                var component = kvp.Key;
+                var ports = kvp.Value;
 
-                foreach (var port in kvp.Value)
+                if (ports == null) continue;
+
+                var portsByIndex = new Dictionary<int, PowerPort>();
+                foreach (var port in ports)
                 {
-                    if (port.IsInput)
-                    {
-                        inputs.Add(port);
-                    }
-                    else
-                    {
-                        outputs.Add(port);
-                    }
+                    portsByIndex[port.PortIndex] = port;
                 }
 
-                foreach (var input in inputs)
+                foreach (var port in ports)
                 {
-                    foreach (var output in outputs)
+                    foreach (var target in ResolveInternalConnections(port, portsByIndex))
                     {
-                        if (!AllowsComponentConnection(input.Component, input, output))
+                        if (!AllowsComponentConnection(component, port, target))
                         {
                             continue;
                         }
 
-                        AddDirectionalEdge(input.Cell, output.Cell);
-                        AddDirectionalEdge(output.Cell, input.Cell);
+                        AddDirectionalEdge(port.Cell, target.Cell);
+                        AddDirectionalEdge(target.Cell, port.Cell);
                     }
                 }
             }
@@ -392,6 +387,37 @@ namespace MachineRepair
                 AddDirectionalEdge(b, a);
                 graph.WireByEdge[(a, b)] = wire;
                 graph.WireByEdge[(b, a)] = wire;
+            }
+
+            IEnumerable<PowerPort> ResolveInternalConnections(
+                PowerPort source,
+                Dictionary<int, PowerPort> byIndex)
+            {
+                if (byIndex == null)
+                {
+                    yield break;
+                }
+
+                var indices = source.Port.internalConnectionIndices;
+                if (indices != null && indices.Length > 0)
+                {
+                    for (int i = 0; i < indices.Length; i++)
+                    {
+                        int targetIndex = indices[i];
+                        if (byIndex.TryGetValue(targetIndex, out var target))
+                        {
+                            yield return target;
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (var target in byIndex.Values)
+                    {
+                        if (target.PortIndex == source.PortIndex) continue;
+                        yield return target;
+                    }
+                }
             }
 
             bool AllowsComponentConnection(MachineComponent component, PowerPort from, PowerPort to)
@@ -551,7 +577,7 @@ namespace MachineRepair
 
                 if (!state.HasInbound || !state.HasOutbound)
                 {
-                    if (component.def.requiresPower)
+                    if (component.def.power)
                     {
                         componentsMissingReturn.Add(component);
                     }
@@ -567,7 +593,7 @@ namespace MachineRepair
         {
             return port.Component != null
                 && port.Component.def != null
-                && port.Component.def.type == ComponentType.ChassisPowerConnection;
+                && port.Component.def.componentType == ComponentType.ChassisPowerConnection;
         }
 
         private static void MergePortElectricalState(
@@ -604,14 +630,8 @@ namespace MachineRepair
                     return;
                 }
 
-                if (port.IsInput)
-                {
-                    HasInbound = true;
-                }
-                else
-                {
-                    HasOutbound = true;
-                }
+                HasInbound = true;
+                HasOutbound = true;
 
                 MaxVoltage = Mathf.Max(MaxVoltage, electrical.Voltage);
                 MaxCurrent = Mathf.Max(MaxCurrent, electrical.Current);
@@ -770,7 +790,6 @@ namespace MachineRepair
             public MachineComponent Component;
             public int PortIndex;
             public PortLocal Port;
-            public bool IsInput;
             public float Voltage;
             public float Current;
         }
@@ -949,11 +968,11 @@ namespace MachineRepair
                         int idx = grid.ToIndex(cell.component.anchorCell);
                         if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
 
-                        if (cell.component.def.requiresPower && componentsMissingReturn.Contains(cell.component))
+                        if (cell.component.def.power && componentsMissingReturn.Contains(cell.component))
                         {
                             faultLog.Add($"{cell.component.def.displayName} missing return path at {cell.component.anchorCell}");
                         }
-                        else if (cell.component.def.requiresPower && !cell.component.IsPowered)
+                        else if (cell.component.def.power && !cell.component.IsPowered)
                         {
                             faultLog.Add($"{cell.component.def.displayName} lacks power at {cell.component.anchorCell}");
                         }
@@ -1096,7 +1115,7 @@ namespace MachineRepair
 
                     foreach (var port in cell.component.portDef.ports)
                     {
-                        if (port.port != PortType.Water) continue;
+                        if (port.portType != PortType.Water) continue;
 
                         Vector2Int global = cell.component.GetGlobalCell(port);
                         if (grid.InBounds(global.x, global.y))
@@ -1159,7 +1178,7 @@ namespace MachineRepair
         {
             return cell.component != null
                 && cell.component.def != null
-                && cell.component.def.type == ComponentType.ChassisWaterConnection;
+                && cell.component.def.componentType == ComponentType.ChassisWaterConnection;
         }
 
         private static bool IsWaterPortCell(Vector2Int cellPos, HashSet<Vector2Int> waterPorts)
@@ -1252,7 +1271,7 @@ namespace MachineRepair
                 {
                     var cell = grid.GetCell(new Vector2Int(x, y));
                     if (cell.component == null || cell.component.def == null) continue;
-                    if (cell.component.def.type != ComponentType.ChassisPowerConnection) continue;
+                    if (cell.component.def.componentType != ComponentType.ChassisPowerConnection) continue;
 
                     grid.SetPower(new Vector2Int(x, y), powerEnabled);
                     cell.component.SetPowered(powerEnabled);
