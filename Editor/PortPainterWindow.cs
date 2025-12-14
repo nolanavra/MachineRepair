@@ -16,10 +16,13 @@ namespace MachineRepair.EditorTools
     {
         private ThingDef def;
         private Vector2 scroll;
+        private Vector2 connectionsScroll;
         private float cellPx = 22f;
         private float gridPadding = 8f;
 
         private PortType selectedType = PortType.Power;
+
+        private readonly Dictionary<int, int> connectionSelections = new Dictionary<int, int>();
 
         private bool showList = true;
         private bool showConnections = true;
@@ -392,32 +395,77 @@ namespace MachineRepair.EditorTools
                 return;
             }
 
+            connectionsScroll = EditorGUILayout.BeginScrollView(connectionsScroll, GUILayout.Height(260));
             using (new EditorGUILayout.VerticalScope("box"))
             {
                 for (int i = 0; i < ports.Length; i++)
                 {
                     var port = ports[i];
-                    EditorGUILayout.LabelField($"[{i}] {port.portType} at ({port.cell.x},{port.cell.y})");
+                    EditorGUILayout.LabelField(PortLabel(i, port));
                     using (new EditorGUI.IndentLevelScope())
                     {
-                        for (int t = 0; t < ports.Length; t++)
+                        var connections = port.internalConnectionIndices ?? Array.Empty<int>();
+                        if (connections.Length == 0)
                         {
-                            if (t == i) continue;
-
-                            var target = ports[t];
-                            var connections = port.internalConnectionIndices ?? Array.Empty<int>();
-                            bool hasConnection = Array.Exists(connections, idx => idx == t);
-                            bool next = EditorGUILayout.ToggleLeft($"Connect to [{t}] {target.portType} ({target.cell.x},{target.cell.y})", hasConnection);
-                            if (next != hasConnection)
+                            EditorGUILayout.LabelField("No connections");
+                        }
+                        else
+                        {
+                            for (int c = 0; c < connections.Length; c++)
                             {
-                                ToggleConnection(i, t, next);
-                                port = def.footprintMask.connectedPorts.ports[i];
+                                int targetIndex = connections[c];
+                                if (targetIndex < 0 || targetIndex >= ports.Length) continue;
+
+                                var target = ports[targetIndex];
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    EditorGUILayout.LabelField($"{PortLabel(targetIndex, target)}", GUILayout.ExpandWidth(true));
+                                    if (GUILayout.Button("Remove", GUILayout.Width(70)))
+                                    {
+                                        ToggleConnection(i, targetIndex, false);
+                                        port = def.footprintMask.connectedPorts.ports[i];
+                                        connections = port.internalConnectionIndices ?? Array.Empty<int>();
+                                        GUIUtility.ExitGUI();
+                                    }
+                                }
                             }
+                        }
+
+                        var optionLabels = BuildConnectionOptions(i, ports, out var optionValues);
+                        if (optionValues.Length > 0)
+                        {
+                            int currentSelection = GetSelectionForPort(i, optionValues);
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                int nextSelection = EditorGUILayout.Popup("Add connection", currentSelection, optionLabels);
+                                if (nextSelection != currentSelection)
+                                {
+                                    connectionSelections[i] = optionValues[nextSelection];
+                                }
+
+                                if (GUILayout.Button("Add", GUILayout.Width(60)))
+                                {
+                                    int selectedValue = connectionSelections[i];
+                                    int selectionIndex = Array.IndexOf(optionValues, selectedValue);
+                                    if (selectionIndex < 0) selectionIndex = 0;
+                                    int targetIndex = optionValues[Mathf.Clamp(selectionIndex, 0, optionValues.Length - 1)];
+                                    if (!Array.Exists(connections, idx => idx == targetIndex))
+                                    {
+                                        ToggleConnection(i, targetIndex, true);
+                                        port = def.footprintMask.connectedPorts.ports[i];
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            EditorGUILayout.HelpBox("No other ports available to connect.", MessageType.None);
                         }
                     }
                     EditorGUILayout.Space(2);
                 }
             }
+            EditorGUILayout.EndScrollView();
         }
 
         void RemovePortAtIndex(int index)
@@ -470,6 +518,45 @@ namespace MachineRepair.EditorTools
             port.internalConnectionIndices = connections.ToArray();
             ports[sourceIndex] = port;
             return true;
+        }
+
+        string PortLabel(int index, PortLocal port)
+        {
+            return $"[{index}] {port.portType} at ({port.cell.x},{port.cell.y})";
+        }
+
+        string[] BuildConnectionOptions(int sourceIndex, PortLocal[] ports, out int[] optionValues)
+        {
+            var labels = new List<string>();
+            var values = new List<int>();
+
+            for (int i = 0; i < ports.Length; i++)
+            {
+                if (i == sourceIndex) continue;
+                labels.Add(PortLabel(i, ports[i]));
+                values.Add(i);
+            }
+
+            optionValues = values.ToArray();
+            return labels.ToArray();
+        }
+
+        int GetSelectionForPort(int portIndex, int[] options)
+        {
+            if (!connectionSelections.TryGetValue(portIndex, out var selected) || options.Length == 0)
+            {
+                connectionSelections[portIndex] = options.Length > 0 ? options[0] : -1;
+                return 0;
+            }
+
+            int current = Array.IndexOf(options, selected);
+            if (current < 0)
+            {
+                connectionSelections[portIndex] = options[0];
+                return 0;
+            }
+
+            return current;
         }
 
         void EnsureConnectionArrays()
