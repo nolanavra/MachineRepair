@@ -237,7 +237,7 @@ namespace MachineRepair
 
                 if (path == null || path.Length < 2 || pathLength <= 0.0001f)
                 {
-                    renderer.enabled = false;
+                    SetArrowRendererEnabled(renderer, false);
                     continue;
                 }
 
@@ -257,9 +257,9 @@ namespace MachineRepair
                 if (direction == Vector3.zero) direction = Vector3.right;
 
                 renderer.transform.position = path[0];
-                renderer.transform.up = direction;
+                ApplyArrowOrientation(renderer, direction);
                 renderer.transform.localScale = new Vector3(scale, scale, 1f);
-                renderer.enabled = ShouldShowArrows() && travelDistance > 0.001f;
+                SetArrowRendererEnabled(renderer, ShouldShowArrows() && travelDistance > 0.001f);
 
                 if (logWaterArrows)
                 {
@@ -269,7 +269,7 @@ namespace MachineRepair
 
             for (int i = activeArrowCount; i < arrowPool.Count; i++)
             {
-                arrowPool[i].enabled = false;
+                SetArrowRendererEnabled(arrowPool[i], false);
             }
         }
 
@@ -284,11 +284,11 @@ namespace MachineRepair
 
                 if (!TryGetArrowSample(i, out var nextPosition, out var targetDirection, out float scale))
                 {
-                    renderer.enabled = false;
+                    SetArrowRendererEnabled(renderer, false);
                     continue;
                 }
 
-                Quaternion targetRotation = Quaternion.LookRotation(Vector3.forward, targetDirection);
+                Quaternion targetRotation = Quaternion.FromToRotation(Vector3.right, targetDirection);
                 renderer.transform.rotation = Quaternion.RotateTowards(renderer.transform.rotation, targetRotation,
                     arrowRotationSpeed * Time.deltaTime);
                 renderer.transform.localScale = new Vector3(scale, scale, 1f);
@@ -448,7 +448,7 @@ namespace MachineRepair
             {
                 if (arrowPool[i] != null)
                 {
-                    arrowPool[i].enabled = show;
+                    SetArrowRendererEnabled(arrowPool[i], show);
                 }
             }
         }
@@ -459,10 +459,25 @@ namespace MachineRepair
             {
                 if (arrowPool[i] != null)
                 {
-                    arrowPool[i].enabled = false;
+                    SetArrowRendererEnabled(arrowPool[i], false);
                 }
             }
             activeArrowCount = 0;
+        }
+
+        private static void ApplyArrowOrientation(SpriteRenderer renderer, Vector3 direction)
+        {
+            if (renderer == null) return;
+
+            Quaternion targetRotation = Quaternion.FromToRotation(Vector3.right, direction);
+            renderer.transform.rotation = targetRotation;
+        }
+
+        private static void SetArrowRendererEnabled(SpriteRenderer renderer, bool enabled)
+        {
+            if (renderer == null || renderer.enabled == enabled) return;
+
+            renderer.enabled = enabled;
         }
 
         private bool ShouldShowArrows() => waterActive && simulationRunning;
