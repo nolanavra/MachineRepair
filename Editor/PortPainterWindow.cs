@@ -1,15 +1,15 @@
 
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Windows;
 
 namespace MachineRepair.EditorTools
 {
     /// <summary>
     /// Port Painter for ComponentDef.
-    /// Lets you place/remove ports (Water/Power/Signal In/Out) on footprint cells.
+    /// Lets you place/remove ports (Water/Power/Signal) on ThingDef footprint cells.
     /// Open via: Tools/Espresso/Port Painter
     /// </summary>
     public class PortPainterWindow : EditorWindow
@@ -20,7 +20,6 @@ namespace MachineRepair.EditorTools
         private float gridPadding = 8f;
 
         private PortType selectedType = PortType.Power;
-        private bool selectedIsInput = true;
 
         private bool showList = true;
 
@@ -50,7 +49,7 @@ namespace MachineRepair.EditorTools
                 }
 
                 // Ensure port set exists
-                if (def.connectionPorts == null)
+                if (def.footprintMask.connectedPorts == null)
                 {
                     if (GUILayout.Button("Create Port Set on this ComponentDef"))
                     {
@@ -60,16 +59,16 @@ namespace MachineRepair.EditorTools
                 }
 
                 // If still null, bail until user creates it
-                if (def.connectionPorts == null)
+                if (def.footprintMask.connectedPorts == null)
                 {
                     EditorGUILayout.HelpBox("This ComponentDef has no Port Set yet. Click the button above to create one.", MessageType.Warning);
                     return;
                 }
 
                 // Ensure footprint grid initialized
-                int w = Mathf.Max(1, def.footprint.width);
-                int h = Mathf.Max(1, def.footprint.height);
-                if (def.footprint.occupied == null || def.footprint.occupied.Length != w * h)
+                int w = Mathf.Max(1, def.footprintMask.width);
+                int h = Mathf.Max(1, def.footprintMask.height);
+                if (def.footprintMask.occupied == null || def.footprintMask.occupied.Length != w * h)
                 {
                     EditorGUILayout.HelpBox("Footprint not initialized. Please set it up in the Footprint Painter first.", MessageType.Warning);
                     return;
@@ -95,11 +94,11 @@ namespace MachineRepair.EditorTools
                 {
                     int idx = y * w + x;
                     var cRect = CellRect(gridRect, w, h, x, y);
-                    bool occ = def.footprint.occupied[idx];
+                    bool occ = def.footprintMask.occupied[idx];
                     EditorGUI.DrawRect(cRect, occ ? occFill : occEmpty);
 
                     // Origin marker
-                    if (def.footprint.origin.x == x && def.footprint.origin.y == y)
+                    if (def.footprintMask.origin.x == x && def.footprintMask.origin.y == y)
                     {
                         var oRect = new Rect(cRect.x + 4, cRect.y + 4, cRect.width - 8, cRect.height - 8);
                         EditorGUI.DrawRect(oRect, new Color(0.9f, 0.8f, 0.25f, 1f));
@@ -120,9 +119,9 @@ namespace MachineRepair.EditorTools
                 }
 
                 // Draw existing ports
-                if (def.connectionPorts != null && def.connectionPorts.ports != null)
+                if (def.footprintMask.connectedPorts != null && def.footprintMask.connectedPorts.ports != null)
                 {
-                    foreach (var p in def.connectionPorts.ports)
+                    foreach (var p in def.footprintMask.connectedPorts.ports)
                     {
                         DrawPortMarker(gridRect, w, h, p);
                     }
@@ -149,18 +148,12 @@ namespace MachineRepair.EditorTools
             {
                 selectedType = (PortType)EditorGUILayout.EnumPopup(selectedType, GUILayout.Width(120));
 
-                // Input / Output selection box
-                var ioLabels = new[] { "Input", "Output" };
-                int currentIO = selectedIsInput ? 0 : 1;
-                int newIO = GUILayout.Toolbar(currentIO, ioLabels, EditorStyles.toolbarButton, GUILayout.Width(140));
-                selectedIsInput = (newIO == 0);
-
                 GUILayout.FlexibleSpace();
                 showList = GUILayout.Toggle(showList, "Show List", EditorStyles.toolbarButton, GUILayout.Width(80));
             }
 
             EditorGUILayout.Space(3);
-            EditorGUILayout.HelpBox("Left-click a cell to ADD the selected port (Layer + Kind). Right-click to REMOVE matching port at that cell. Hold Ctrl + Right-click to remove ALL ports from the cell.", MessageType.None);
+            EditorGUILayout.HelpBox("Left-click a cell to ADD the selected port type. Right-click to REMOVE matching type at that cell. Hold Ctrl + Right-click to remove ALL ports from the cell.", MessageType.None);
         }
 
         void HandleMouse(Rect gridRect, int w, int h)
@@ -173,14 +166,14 @@ namespace MachineRepair.EditorTools
                 Vector2Int cell = PixelToCell(e.mousePosition, gridRect, w, h);
                 if (e.button == 0) // left add
                 {
-                    AddPort(cell, selectedType, selectedIsInput);
+                    AddPort(cell, selectedType);
                 }
                 else if (e.button == 1) // right remove
                 {
                     if (e.control || e.command)
                         RemoveAllPortsAt(cell);
                     else
-                        RemovePort(cell, selectedType, selectedIsInput);
+                        RemovePort(cell, selectedType);
                 }
                 e.Use();
             }
@@ -194,51 +187,51 @@ namespace MachineRepair.EditorTools
             return new Vector2Int(x, y);
         }
 
-        void AddPort(Vector2Int cell,  PortType type, bool isInput)
+        void AddPort(Vector2Int cell,  PortType type)
         {
-            if (def.connectionPorts == null) return;
-            if (def.connectionPorts.ports == null) def.connectionPorts.ports = new PortLocal[0];
+            if (def.footprintMask.connectedPorts == null) return;
+            if (def.footprintMask.connectedPorts.ports == null) def.footprintMask.connectedPorts.ports = new PortLocal[0];
 
             // Avoid duplicates (same cell+layer+kind)
-            for (int i = 0; i < def.connectionPorts.ports.Length; i++)
+            for (int i = 0; i < def.footprintMask.connectedPorts.ports.Length; i++)
             {
-                var p = def.connectionPorts.ports[i];
-                if (p.cell == cell && p.port == type && p.isInput == isInput)
+                var p = def.footprintMask.connectedPorts.ports[i];
+                if (p.cell == cell && p.portType == type)
                     return;
             }
 
-            Undo.RecordObject(def.connectionPorts, "Add Port");
-            var list = new List<PortLocal>(def.connectionPorts.ports);
-            list.Add(new PortLocal { cell = cell, port = type, isInput = isInput });
-            def.connectionPorts.ports = list.ToArray();
-            EditorUtility.SetDirty(def.connectionPorts);
+            Undo.RecordObject(def.footprintMask.connectedPorts, "Add Port");
+            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
+            list.Add(new PortLocal { cell = cell, portType = type, internalConnectionIndices = Array.Empty<int>() });
+            def.footprintMask.connectedPorts.ports = list.ToArray();
+            EditorUtility.SetDirty(def.footprintMask.connectedPorts);
             Repaint();
         }
 
-        void RemovePort(Vector2Int cell, PortType type, bool isInput)
+        void RemovePort(Vector2Int cell, PortType type)
         {
-            if (def.connectionPorts == null || def.connectionPorts.ports == null) return;
-            var list = new List<PortLocal>(def.connectionPorts.ports);
-            int removed = list.RemoveAll(p => p.cell == cell && p.port == type && p.isInput == isInput);
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
+            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
+            int removed = list.RemoveAll(p => p.cell == cell && p.portType == type);
             if (removed > 0)
             {
-                Undo.RecordObject(def.connectionPorts, "Remove Port");
-                def.connectionPorts.ports = list.ToArray();
-                EditorUtility.SetDirty(def.connectionPorts);
+                Undo.RecordObject(def.footprintMask.connectedPorts, "Remove Port");
+                def.footprintMask.connectedPorts.ports = list.ToArray();
+                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
                 Repaint();
             }
         }
 
         void RemoveAllPortsAt(Vector2Int cell)
         {
-            if (def.connectionPorts == null || def.connectionPorts.ports == null) return;
-            var list = new List<PortLocal>(def.connectionPorts.ports);
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
+            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
             int removed = list.RemoveAll(p => p.cell == cell);
             if (removed > 0)
             {
-                Undo.RecordObject(def.connectionPorts, "Remove Ports");
-                def.connectionPorts.ports = list.ToArray();
-                EditorUtility.SetDirty(def.connectionPorts);
+                Undo.RecordObject(def.footprintMask.connectedPorts, "Remove Ports");
+                def.footprintMask.connectedPorts.ports = list.ToArray();
+                EditorUtility.SetDirty(def.footprintMask.connectedPorts);
                 Repaint();
             }
         }
@@ -250,7 +243,7 @@ namespace MachineRepair.EditorTools
 
             // Color by layer
             Color col = Color.white;
-            switch (p.port)
+            switch (p.portType)
             {
                 case PortType.Water: col = new Color(0.3f, 0.7f, 1f, 1f); break;
                 case PortType.Power: col = new Color(1f, 0.8f, 0.2f, 1f); break;
@@ -258,15 +251,14 @@ namespace MachineRepair.EditorTools
                 default: col = Color.white; break;
             }
 
-            // Outline thickness difference for In/Out
             float r = Mathf.Min(cRect.width, cRect.height) * 0.38f;
             Handles.color = col;
             Handles.DrawSolidDisc(center, Vector3.forward, r * 0.9f);
-            Handles.color = (!p.isInput ? Color.black : Color.white);
+            Handles.color = Color.white;
             Handles.DrawWireDisc(center, Vector3.forward, r);
 
             // Letter
-            string label = PortShortLabel(p.port, p.isInput);
+            string label = PortShortLabel(p.portType);
             var style = new GUIStyle(EditorStyles.boldLabel);
             style.normal.textColor = Color.black;
             style.alignment = TextAnchor.MiddleCenter;
@@ -274,13 +266,13 @@ namespace MachineRepair.EditorTools
             GUI.Label(textRect, label, style);
         }
 
-        string PortShortLabel(PortType k, bool j)
+        string PortShortLabel(PortType k)
         {
             switch (k)
             {
-                case PortType.Water: if (j) return "W_in"; else return "W_out";
-                case PortType.Power: if(j) return "P_in"; else return "P_out";
-                case PortType.Signal: if (j) return "S_in"; else return "S_out";
+                case PortType.Water: return "W";
+                case PortType.Power: return "P";
+                case PortType.Signal: return "S";
             }
             return "?";
         }
@@ -288,13 +280,13 @@ namespace MachineRepair.EditorTools
         void DrawPortList()
         {
             if (!showList) return;
-            if (def.connectionPorts == null || def.connectionPorts.ports == null) return;
+            if (def.footprintMask.connectedPorts == null || def.footprintMask.connectedPorts.ports == null) return;
 
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField("Ports", EditorStyles.boldLabel);
             using (new EditorGUILayout.VerticalScope("box"))
             {
-                var ports = def.connectionPorts.ports;
+                var ports = def.footprintMask.connectedPorts.ports;
                 if (ports.Length == 0)
                 {
                     EditorGUILayout.LabelField("(none)");
@@ -306,19 +298,23 @@ namespace MachineRepair.EditorTools
                     var p = ports[i];
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        EditorGUILayout.LabelField($"[{i}]  Cell ({p.cell.x},{p.cell.y})  {p.isInput}  {p.port}");
+                        string links = (p.internalConnectionIndices != null && p.internalConnectionIndices.Length > 0)
+                            ? string.Join(",", p.internalConnectionIndices)
+                            : "none";
+
+                        EditorGUILayout.LabelField($"[{i}]  Cell ({p.cell.x},{p.cell.y})  {p.portType}  links: [{links}]");
                         if (GUILayout.Button("Select Cell", GUILayout.Width(90)))
                         {
                             // Scroll roughly to the cell row
-                            scroll.y = Mathf.Max(0, (def.footprint.height - 1 - p.cell.y) * cellPx - position.height * 0.25f);
+                            scroll.y = Mathf.Max(0, (def.footprintMask.height - 1 - p.cell.y) * cellPx - position.height * 0.25f);
                         }
                         if (GUILayout.Button("Delete", GUILayout.Width(70)))
                         {
-                            Undo.RecordObject(def.connectionPorts, "Delete Port");
-                            var list = new List<PortLocal>(def.connectionPorts.ports);
+                            Undo.RecordObject(def.footprintMask.connectedPorts, "Delete Port");
+                            var list = new List<PortLocal>(def.footprintMask.connectedPorts.ports);
                             list.RemoveAt(i);
-                            def.connectionPorts.ports = list.ToArray();
-                            EditorUtility.SetDirty(def.connectionPorts);
+                            def.footprintMask.connectedPorts.ports = list.ToArray();
+                            EditorUtility.SetDirty(def.footprintMask.connectedPorts);
                             GUIUtility.ExitGUI();
                             return;
                         }
@@ -334,7 +330,7 @@ namespace MachineRepair.EditorTools
             var ps = ScriptableObject.CreateInstance<PortDef>();
             AssetDatabase.CreateAsset(ps, path);
             Undo.RecordObject(d, "Assign Port Set");
-            d.connectionPorts = ps;
+            d.footprintMask.connectedPorts = ps;
             EditorUtility.SetDirty(d);
             AssetDatabase.SaveAssets();
         }

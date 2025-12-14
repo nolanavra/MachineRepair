@@ -8,8 +8,9 @@ namespace MachineRepair
     public struct PortLocal
     {
         public Vector2Int cell;
-        public PortType port;
-        public bool isInput;
+        public PortType portType;
+        public int[] internalConnectionIndices;
+        public float flowrateMax;
 
         public Vector2Int ToGlobalCell(Vector2Int anchor, int rotation)
         {
@@ -44,5 +45,18 @@ namespace MachineRepair
     public class PortDef : ScriptableObject
     {
         public PortLocal[] ports;
+
+        private void OnValidate()
+        {
+            if (ports == null) return;
+
+            for (int i = 0; i < ports.Length; i++)
+            {
+                if (ports[i].internalConnectionIndices == null)
+                {
+                    ports[i].internalConnectionIndices = Array.Empty<int>();
+                }
+            }
+        }
     }
 }

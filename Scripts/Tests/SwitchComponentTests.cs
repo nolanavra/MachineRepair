@@ -65,8 +65,8 @@ namespace MachineRepair.Tests
             var portDef = ScriptableObject.CreateInstance<PortDef>();
             portDef.ports = new[]
             {
-                new PortLocal { cell = Vector2Int.zero, port = PortType.Power, isInput = true },
-                new PortLocal { cell = new Vector2Int(1, 0), port = PortType.Power, isInput = false }
+                new PortLocal { cell = Vector2Int.zero, portType = PortType.Power, internalConnectionIndices = new[]{1} },
+                new PortLocal { cell = new Vector2Int(1, 0), portType = PortType.Power, internalConnectionIndices = new[]{0} }
             };
 
             return portDef;

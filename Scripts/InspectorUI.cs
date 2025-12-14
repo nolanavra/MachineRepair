@@ -276,7 +276,7 @@ public class InspectorUI : MonoBehaviour
         sb.AppendLine($"- Powered: {powered}");
         sb.AppendLine($"- Water Flow In: {flowIn:F2}");
 
-        if (def.type == ComponentType.Boiler)
+        if (def.componentType == ComponentType.Boiler)
         {
             float fillPercent = def.maxPressure > 0f ? Mathf.Clamp01(pressure / def.maxPressure) * 100f : 0f;
             float temperature = powered ? Mathf.Max(def.targetTempMin, def.temperatureC) : def.temperatureC;

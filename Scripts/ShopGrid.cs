@@ -303,7 +303,7 @@ namespace MachineRepair.Grid
 
                 if (def == null) continue;
 
-                var footprintCells = GetFootprintCells(gridCell, def.footprint);
+                var footprintCells = GetFootprintCells(gridCell, def.footprintMask);
                 if (!IsFootprintPlaceable(footprintCells)) continue;
 
                 var component = CreateComponentInstance(def, gridCell);
@@ -482,7 +482,7 @@ namespace MachineRepair.Grid
         public FootprintCells GetFootprintCells(Vector2Int anchorCell, ThingDef def, int rotationSteps = 0)
         {
             if (def == null) return new FootprintCells(new List<Vector2Int>(), new List<Vector2Int>());
-            return GetFootprintCells(anchorCell, def.footprint, rotationSteps);
+            return GetFootprintCells(anchorCell, def.footprintMask, rotationSteps);
         }
 
         private FootprintCells GetFootprintCells(MachineComponent component)
@@ -562,10 +562,10 @@ namespace MachineRepair.Grid
 
             machine.def = def;
             machine.grid = this;
-            machine.footprint = def.footprint;
+            machine.footprint = def.footprintMask;
             machine.rotation = rotationSteps;
             machine.anchorCell = anchorCell;
-            machine.portDef = def.connectionPorts;
+            machine.portDef = def.footprintMask.connectedPorts;
 
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
