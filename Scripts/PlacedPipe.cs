@@ -24,6 +24,10 @@ namespace MachineRepair
         [Header("State")]
         public float pressure;
         public float flow;
+        [Tooltip("0-100% fill of the pipe run. Updated by the water simulation.")]
+        [Range(0f, 100f)] public float fillLevel;
+        [Tooltip("Maximum flowrate supported by this pipe run (copied from PipeDef.maxFlow).")]
+        public float flowrateMax;
         public bool pipeDamaged;
 
         [Header("Visuals")]

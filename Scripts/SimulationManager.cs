@@ -53,6 +53,7 @@ namespace MachineRepair
         private readonly Dictionary<PlacedWire, float> wireVoltage = new();
         private readonly Dictionary<PlacedWire, float> wireCurrent = new();
         private readonly Dictionary<Vector2Int, PortElectricalState> portElectricalState = new();
+        private readonly Dictionary<MachineComponent, float> componentFillLevels = new();
         private readonly List<List<Vector2Int>> poweredLoops = new();
 
         private static readonly Vector2Int[] WaterPropagationOffsets =
@@ -794,6 +795,28 @@ namespace MachineRepair
             public float Current;
         }
 
+        private struct WaterPortRef
+        {
+            public Vector2Int Cell;
+            public MachineComponent Component;
+            public int PortIndex;
+            public PortLocal Port;
+        }
+
+        private struct FlowFrontier
+        {
+            public WaterPortRef PortRef;
+            public float AvailableFlow;
+            public int StepsFromSource;
+        }
+
+        /// <summary>
+        /// Propagates hydraulic flow starting at chassis water ports. Each port pushes its
+        /// flowrate into connected pipes/components, filling them toward 100% before
+        /// forwarding along internal port connections (pipe endpoints are treated as
+        /// intra-component links once full). This maintains a deterministic, stepwise fill
+        /// progression the UI can visualize.
+        /// </summary>
         private void PropagatePressureFlow()
         {
             detectedLeaks.Clear();
@@ -813,99 +836,71 @@ namespace MachineRepair
                 return;
             }
 
-            var waterPorts = new HashSet<Vector2Int>();
+            System.Array.Clear(pressureGraph, 0, pressureGraph.Length);
+            System.Array.Clear(flowGraph, 0, flowGraph.Length);
+            System.Array.Fill(waterArrowSteps, -1);
+
+            CleanupComponentFillLevels();
+
+            var waterPorts = new Dictionary<Vector2Int, WaterPortRef>();
             CollectWaterPorts(waterPorts);
 
-            var visited = new HashSet<int>();
-            var queue = new Queue<Vector2Int>();
+            var processedPorts = new HashSet<Vector2Int>();
+            var queue = new Queue<FlowFrontier>();
 
-            for (int y = 0; y < grid.height; y++)
+            foreach (var kvp in waterPorts)
             {
-                for (int x = 0; x < grid.width; x++)
+                var portRef = kvp.Value;
+                if (portRef.Component?.def == null) continue;
+                if (portRef.Component.def.componentType != ComponentType.ChassisWaterConnection) continue;
+
+                SetComponentFill(portRef.Component, 100f);
+                float sourceFlow = Mathf.Max(0f, portRef.Port.flowrateMax);
+                queue.Enqueue(new FlowFrontier
                 {
-                    var cell = grid.GetCell(new Vector2Int(x, y));
-                    if (!IsWaterSupplyComponent(cell)) continue;
+                    PortRef = portRef,
+                    AvailableFlow = sourceFlow,
+                    StepsFromSource = 0
+                });
 
-                    if (!grid.InBounds(cell.component.anchorCell.x, cell.component.anchorCell.y)) continue;
-                    int idx = grid.ToIndex(cell.component.anchorCell);
-
-                    pressureGraph[idx] = cell.component.def.maxPressure;
-                    flowGraph[idx] = Mathf.Max(0f, cell.component.def.flowCoef);
-                    waterArrowSteps[idx] = 0;
-
-                    if (visited.Add(idx))
-                    {
-                        queue.Enqueue(cell.component.anchorCell);
-                    }
-                }
+                StampCellFlow(portRef.Cell, sourceFlow, portRef.Component.def.maxPressure, 0);
             }
 
             while (queue.Count > 0)
             {
-                var cellPos = queue.Dequeue();
-                int idx = grid.ToIndex(cellPos);
-                int stepCount = Mathf.Max(0, waterArrowSteps[idx]);
+                var frontier = queue.Dequeue();
 
-                float pressure = pressureGraph[idx];
-                float flow = flowGraph[idx];
-                if (pressure <= 0f && flow <= 0f) continue;
+                if (!waterPorts.TryGetValue(frontier.PortRef.Cell, out var portRef)) continue;
+                if (processedPorts.Contains(portRef.Cell)) continue;
 
-                var cell = grid.GetCell(cellPos);
-                bool traversable = cell.HasPipe || IsWaterSupplyComponent(cell) || IsWaterPortCell(cellPos, waterPorts);
-                if (!traversable) continue;
+                float availableFlow = Mathf.Min(frontier.AvailableFlow, Mathf.Max(0f, portRef.Port.flowrateMax));
+                if (availableFlow <= 0f) continue;
 
-                foreach (var offset in WaterPropagationOffsets)
+                float componentFill = GetComponentFill(portRef.Component);
+                float remainingComponent = Mathf.Max(0f, 100f - componentFill);
+                if (remainingComponent > 0f)
                 {
-                    Vector2Int neighbor = cellPos + offset;
+                    float applied = Mathf.Min(availableFlow, remainingComponent);
+                    componentFill = Mathf.Min(100f, componentFill + applied);
+                    SetComponentFill(portRef.Component, componentFill);
+                    StampCellFlow(portRef.Cell, applied, portRef.Component?.def?.maxPressure ?? 0f, frontier.StepsFromSource);
 
-                    if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
-
-                    var neighborCell = grid.GetCell(neighbor);
-                    bool acceptsWater = neighborCell.HasPipe || IsWaterPortCell(neighbor, waterPorts) || IsWaterSupplyComponent(neighborCell);
-                    if (!acceptsWater) continue;
-
-                    int nIdx = grid.ToIndex(neighbor);
-                    bool propagated = false;
-                    if (pressure > pressureGraph[nIdx])
+                    if (componentFill < 100f - Mathf.Epsilon)
                     {
-                        pressureGraph[nIdx] = pressure;
-                        propagated = true;
-                    }
-                    if (flow > flowGraph[nIdx])
-                    {
-                        flowGraph[nIdx] = flow;
-                        propagated = true;
-                    }
-
-                    int nextStep = stepCount + 1;
-                    if (waterArrowSteps[nIdx] == -1 || nextStep < waterArrowSteps[nIdx])
-                    {
-                        waterArrowSteps[nIdx] = nextStep;
-                    }
-
-                    if (flow > 0f && propagated && ShouldSpawnWaterArrow(nextStep))
-                    {
-                        AddWaterFlowArrow(cellPos, neighbor, flow);
-                    }
-
-                    if (visited.Add(nIdx))
-                    {
-                        queue.Enqueue(neighbor);
+                        continue;
                     }
                 }
 
-                if (cell.HasPipe && !IsWaterPortCell(cellPos, waterPorts))
+                StampCellFlow(portRef.Cell, availableFlow, portRef.Component?.def?.maxPressure ?? 0f, frontier.StepsFromSource);
+                processedPorts.Add(portRef.Cell);
+
+                bool propagatedToPipe = TryPushFlowIntoPipes(portRef, availableFlow, frontier.StepsFromSource, waterPorts, queue);
+                if (!propagatedToPipe)
                 {
-                    int connections = CountWaterConnections(cellPos, waterPorts);
-                    if (connections <= 1)
-                    {
-                        detectedLeaks.Add(new LeakInfo
-                        {
-                            Cell = cellPos,
-                            WorldPosition = grid.CellToWorld(cellPos)
-                        });
-                    }
+                    RecordLeak(portRef.Cell);
                 }
+
+                PropagateInternalConnections(portRef, availableFlow, frontier.StepsFromSource, waterPorts, queue);
             }
 
             NotifyLeakListeners();
@@ -1102,7 +1097,7 @@ namespace MachineRepair
             return copy;
         }
 
-        private void CollectWaterPorts(HashSet<Vector2Int> waterPorts)
+        private void CollectWaterPorts(Dictionary<Vector2Int, WaterPortRef> waterPorts)
         {
             waterPorts.Clear();
 
@@ -1113,38 +1108,249 @@ namespace MachineRepair
                     var cell = grid.GetCell(new Vector2Int(x, y));
                     if (cell.component == null || cell.component.portDef == null || cell.component.portDef.ports == null) continue;
 
-                    foreach (var port in cell.component.portDef.ports)
+                    for (int i = 0; i < cell.component.portDef.ports.Length; i++)
                     {
+                        var port = cell.component.portDef.ports[i];
                         if (port.portType != PortType.Water) continue;
 
                         Vector2Int global = cell.component.GetGlobalCell(port);
                         if (grid.InBounds(global.x, global.y))
                         {
-                            waterPorts.Add(global);
+                            waterPorts[global] = new WaterPortRef
+                            {
+                                Cell = global,
+                                Component = cell.component,
+                                PortIndex = i,
+                                Port = port
+                            };
                         }
                     }
                 }
             }
         }
 
-        private int CountWaterConnections(Vector2Int cellPos, HashSet<Vector2Int> waterPorts)
+        private void CleanupComponentFillLevels()
         {
-            int connections = 0;
-
-            foreach (var offset in WaterPropagationOffsets)
+            var toRemove = new List<MachineComponent>();
+            foreach (var kvp in componentFillLevels)
             {
-                Vector2Int neighbor = cellPos + offset;
-
-                if (!grid.InBounds(neighbor.x, neighbor.y)) continue;
-
-                var neighborCell = grid.GetCell(neighbor);
-                if (neighborCell.HasPipe || IsWaterSupplyComponent(neighborCell) || IsWaterPortCell(neighbor, waterPorts))
+                if (kvp.Key == null)
                 {
-                    connections++;
+                    toRemove.Add(kvp.Key);
                 }
             }
 
-            return connections;
+            foreach (var component in toRemove)
+            {
+                componentFillLevels.Remove(component);
+            }
+        }
+
+        private float GetComponentFill(MachineComponent component)
+        {
+            if (component == null) return 0f;
+            return componentFillLevels.TryGetValue(component, out var fill)
+                ? Mathf.Clamp(fill, 0f, 100f)
+                : 0f;
+        }
+
+        private void SetComponentFill(MachineComponent component, float value)
+        {
+            if (component == null) return;
+
+            componentFillLevels[component] = Mathf.Clamp(value, 0f, 100f);
+        }
+
+        private bool TryPushFlowIntoPipes(
+            WaterPortRef portRef,
+            float availableFlow,
+            int stepsFromSource,
+            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
+            Queue<FlowFrontier> queue)
+        {
+            if (grid == null) return false;
+
+            var cell = grid.GetCell(portRef.Cell);
+            if (!cell.HasPipe) return false;
+
+            bool propagated = false;
+            foreach (var pipe in cell.Pipes)
+            {
+                if (pipe == null) continue;
+
+                propagated = true;
+                EnsurePipeFlowrate(pipe);
+
+                float pipeRemaining = Mathf.Max(0f, 100f - Mathf.Clamp(pipe.fillLevel, 0f, 100f));
+                float permitted = pipe.flowrateMax > 0f ? Mathf.Min(availableFlow, pipe.flowrateMax) : availableFlow;
+                float applied = Mathf.Min(permitted, pipeRemaining);
+
+                if (applied > 0f)
+                {
+                    pipe.fillLevel = Mathf.Min(100f, pipe.fillLevel + applied);
+                    pipe.flow = applied;
+                    StampPipeFlow(pipe, applied, stepsFromSource + 1);
+
+                    var nextCell = GetPipeNextStep(pipe, portRef.Cell);
+                    if (nextCell.HasValue && ShouldSpawnWaterArrow(stepsFromSource + 1))
+                    {
+                        AddWaterFlowArrow(portRef.Cell, nextCell.Value, applied);
+                    }
+                }
+
+                if (pipe.fillLevel >= 100f - Mathf.Epsilon)
+                {
+                    EnqueueOppositePort(pipe, portRef.Cell, permitted, stepsFromSource + 1, waterPorts, queue);
+                }
+            }
+
+            return propagated;
+        }
+
+        private void RecordLeak(Vector2Int cell)
+        {
+            if (grid == null || !grid.InBounds(cell.x, cell.y)) return;
+
+            for (int i = 0; i < detectedLeaks.Count; i++)
+            {
+                if (detectedLeaks[i].Cell == cell) return;
+            }
+
+            detectedLeaks.Add(new LeakInfo
+            {
+                Cell = cell,
+                WorldPosition = grid.CellToWorld(cell)
+            });
+        }
+
+        private void PropagateInternalConnections(
+            WaterPortRef portRef,
+            float availableFlow,
+            int stepsFromSource,
+            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
+            Queue<FlowFrontier> queue)
+        {
+            var ports = portRef.Component?.portDef?.ports;
+            if (ports == null) return;
+
+            var connections = portRef.Port.internalConnectionIndices;
+            if (connections == null) return;
+
+            foreach (var targetIndex in connections)
+            {
+                if (targetIndex < 0 || targetIndex >= ports.Length) continue;
+
+                var targetPort = ports[targetIndex];
+                Vector2Int targetCell = portRef.Component.GetGlobalCell(targetPort);
+                if (!grid.InBounds(targetCell.x, targetCell.y)) continue;
+                if (!waterPorts.TryGetValue(targetCell, out var targetRef)) continue;
+
+                float flowOut = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.flowrateMax));
+                queue.Enqueue(new FlowFrontier
+                {
+                    PortRef = targetRef,
+                    AvailableFlow = flowOut,
+                    StepsFromSource = stepsFromSource + 1
+                });
+
+                if (ShouldSpawnWaterArrow(stepsFromSource + 1))
+                {
+                    AddWaterFlowArrow(portRef.Cell, targetCell, flowOut);
+                }
+            }
+        }
+
+        private static void EnsurePipeFlowrate(PlacedPipe pipe)
+        {
+            if (pipe == null) return;
+
+            if (pipe.flowrateMax <= 0f && pipe.pipeDef != null)
+            {
+                pipe.flowrateMax = Mathf.Max(0f, pipe.pipeDef.maxFlow);
+            }
+
+            pipe.fillLevel = Mathf.Clamp(pipe.fillLevel, 0f, 100f);
+        }
+
+        private void StampCellFlow(Vector2Int cell, float flow, float pressure, int stepsFromSource)
+        {
+            if (grid == null || !grid.InBounds(cell.x, cell.y)) return;
+
+            int idx = grid.ToIndex(cell);
+            flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
+            pressureGraph[idx] = Mathf.Max(pressureGraph[idx], pressure);
+
+            if (waterArrowSteps[idx] == -1 || stepsFromSource < waterArrowSteps[idx])
+            {
+                waterArrowSteps[idx] = stepsFromSource;
+            }
+        }
+
+        private void StampPipeFlow(PlacedPipe pipe, float flow, int stepsFromSource)
+        {
+            if (grid == null || pipe?.occupiedCells == null) return;
+
+            foreach (var cell in pipe.occupiedCells)
+            {
+                if (!grid.InBounds(cell.x, cell.y)) continue;
+                int idx = grid.ToIndex(cell);
+                flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
+                pressureGraph[idx] = Mathf.Max(pressureGraph[idx], pipe.pipeDef != null ? pipe.pipeDef.maxPressure : 0f);
+
+                if (waterArrowSteps[idx] == -1 || stepsFromSource < waterArrowSteps[idx])
+                {
+                    waterArrowSteps[idx] = stepsFromSource;
+                }
+            }
+        }
+
+        private Vector2Int? GetPipeNextStep(PlacedPipe pipe, Vector2Int fromCell)
+        {
+            if (pipe?.occupiedCells == null) return null;
+
+            for (int i = 0; i < pipe.occupiedCells.Count; i++)
+            {
+                var candidate = pipe.occupiedCells[i];
+                if (candidate == fromCell) continue;
+
+                Vector2Int delta = candidate - fromCell;
+                if (delta != Vector2Int.zero && Mathf.Abs(delta.x) <= 1 && Mathf.Abs(delta.y) <= 1)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private void EnqueueOppositePort(
+            PlacedPipe pipe,
+            Vector2Int fromCell,
+            float availableFlow,
+            int stepsFromSource,
+            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
+            Queue<FlowFrontier> queue)
+        {
+            Vector2Int targetCell = fromCell == pipe.startPortCell ? pipe.endPortCell : pipe.startPortCell;
+
+            if (waterPorts.TryGetValue(targetCell, out var targetPort))
+            {
+                queue.Enqueue(new FlowFrontier
+                {
+                    PortRef = targetPort,
+                    AvailableFlow = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.Port.flowrateMax)),
+                    StepsFromSource = stepsFromSource
+                });
+
+                if (ShouldSpawnWaterArrow(stepsFromSource))
+                {
+                    AddWaterFlowArrow(fromCell, targetCell, availableFlow);
+                }
+            }
+            else
+            {
+                RecordLeak(targetCell);
+            }
         }
 
         private void AddWaterFlowArrow(Vector2Int from, Vector2Int to, float flow)
