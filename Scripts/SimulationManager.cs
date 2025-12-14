@@ -97,16 +97,13 @@ namespace MachineRepair
 
         public struct WaterFlowArrow
         {
-            public Vector3 StartPosition;
-            public Vector3 EndPosition;
-            public Vector2 Direction;
+            public Vector3[] Path;
+            public float PathLength;
+            public float TravelDistance;
             public float Speed;
-            public float SegmentLength;
             public float Scale;
-            public float Progress;
             public Vector2Int StartCell;
             public Vector2Int EndCell;
-            public int SegmentIndex;
         }
 
         private void Awake()
@@ -1374,40 +1371,6 @@ namespace MachineRepair
             }
         }
 
-        private void AddWaterFlowArrow(Vector2Int from, Vector2Int to, float speed, float pressure, float progress, int segmentIndex)
-        {
-            if (grid == null) return;
-
-            Vector2 direction = to - from;
-            if (direction == Vector2.zero) return;
-
-            Vector3 start = grid.CellToWorld(from);
-            Vector3 end = grid.CellToWorld(to);
-            float length = Vector3.Distance(start, end);
-            float clampedProgress = Mathf.Clamp01(progress);
-
-            var arrow = new WaterFlowArrow
-            {
-                StartCell = from,
-                EndCell = to,
-                StartPosition = start,
-                EndPosition = end,
-                Direction = direction.normalized,
-                Speed = Mathf.Max(0f, speed),
-                SegmentLength = length,
-                Scale = pressure / 9f,
-                Progress = clampedProgress,
-                SegmentIndex = segmentIndex
-            };
-
-            waterFlowArrows.Add(arrow);
-
-            if (logWaterFlowPaths)
-            {
-                Debug.Log($"[SimulationManager] Added water arrow segment {segmentIndex} from {from} toward {to} dir={arrow.Direction} speed={arrow.Speed:0.###} len={length:0.###} scale={arrow.Scale:0.###} progress={arrow.Progress:0.###}");
-            }
-        }
-
         private void AddWaterFlowArrowSegments(PlacedPipe pipe, Vector2Int originCell, float flow)
         {
             if (grid == null || pipe?.occupiedCells == null || pipe.occupiedCells.Count < 2) return;
@@ -1440,33 +1403,66 @@ namespace MachineRepair
                 }
             }
 
-            int totalSegments = Mathf.Max(0, orderedCells.Count - 1);
-            int permittedSegments = totalSegments;
-
-            if (pipe.fillLevel < 100f - Mathf.Epsilon)
+            int originIndex = orderedCells.IndexOf(originCell);
+            if (originIndex > 0)
             {
-                int halfwayIndex = totalSegments / 2;
-                permittedSegments = Mathf.Max(1, halfwayIndex + 1);
+                orderedCells.RemoveRange(0, originIndex);
             }
 
             float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
             float normalizedSpeed = pipe.flowrateMax > 0f ? Mathf.Clamp(flow / pipe.flowrateMax, 0f, 1f) : 0f;
-            float progress = Mathf.Clamp01(pipe.fillLevel / 100f);
+            float pathLength = 0f;
 
-            for (int i = 0; i < totalSegments && i < permittedSegments; i++)
+            var path = new List<Vector3>(orderedCells.Count);
+            for (int i = 0; i < orderedCells.Count; i++)
             {
-                var start = orderedCells[i];
-                var end = orderedCells[i + 1];
+                Vector3 point = grid.CellToWorld(orderedCells[i]);
+                path.Add(point);
 
-                if (Mathf.Abs(start.x - end.x) > 1 || Mathf.Abs(start.y - end.y) > 1)
+                if (i == 0) continue;
+
+                Vector3 prev = path[i - 1];
+                float segmentLength = Vector3.Distance(prev, point);
+                if (Mathf.Abs(segmentLength) < 0.0001f)
+                {
+                    continue;
+                }
+
+                pathLength += segmentLength;
+                if (Mathf.Abs(orderedCells[i - 1].x - orderedCells[i].x) > 1 || Mathf.Abs(orderedCells[i - 1].y - orderedCells[i].y) > 1)
                 {
                     if (logWaterFlowPaths)
                     {
-                        Debug.LogWarning($"[SimulationManager] Non-adjacent pipe segment detected between {start} and {end} (segment {i}).");
+                        Debug.LogWarning($"[SimulationManager] Non-adjacent pipe segment detected between {orderedCells[i - 1]} and {orderedCells[i]} (segment {i - 1}).");
                     }
                 }
+            }
 
-                AddWaterFlowArrow(start, end, normalizedSpeed, pressure, progress, i);
+            if (path.Count < 2 || pathLength <= 0.0001f)
+            {
+                return;
+            }
+
+            float travelDistance = pipe.fillLevel >= 100f - Mathf.Epsilon
+                ? pathLength
+                : pathLength * 0.5f;
+
+            var arrow = new WaterFlowArrow
+            {
+                StartCell = orderedCells[0],
+                EndCell = orderedCells[^1],
+                Path = path.ToArray(),
+                PathLength = pathLength,
+                TravelDistance = Mathf.Max(0.001f, travelDistance),
+                Speed = Mathf.Max(0f, normalizedSpeed),
+                Scale = pressure / 9f
+            };
+
+            waterFlowArrows.Add(arrow);
+
+            if (logWaterFlowPaths)
+            {
+                Debug.Log($"[SimulationManager] Added water arrow path start={arrow.StartCell} end={arrow.EndCell} len={arrow.PathLength:0.###} travel={arrow.TravelDistance:0.###} speed={arrow.Speed:0.###} scale={arrow.Scale:0.###}");
             }
         }
 
