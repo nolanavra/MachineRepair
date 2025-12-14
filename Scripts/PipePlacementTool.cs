@@ -724,6 +724,8 @@ namespace MachineRepair
             placedPipe.occupiedCells.AddRange(path);
             placedPipe.flow = defaultFlow;
             placedPipe.pressure = defaultPressure;
+            placedPipe.fillLevel = 0f;
+            placedPipe.flowrateMax = pipeDef != null ? Mathf.Max(0f, pipeDef.maxFlow) : 0f;
 
             return placedPipe;
         }
