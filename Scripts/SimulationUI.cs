@@ -346,6 +346,22 @@ namespace MachineRepair
             return true;
         }
 
+        private static float CalculatePathLength(IReadOnlyList<Vector3> path)
+        {
+            float length = 0f;
+            if (path == null || path.Count < 2)
+            {
+                return length;
+            }
+
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                length += Vector3.Distance(path[i], path[i + 1]);
+            }
+
+            return length;
+        }
+
         private static bool TryEvaluatePathPosition(IReadOnlyList<Vector3> path, float distance, out Vector3 position, out Vector3 direction)
         {
             position = Vector3.zero;
