@@ -162,28 +162,46 @@ namespace MachineRepair {
                 EnsureDisplaySpriteParent();
 
                 Vector2Int? firstValidCell = null;
-                Vector3 accumulatedWorld = Vector3.zero;
+                Vector2Int min = new Vector2Int(int.MaxValue, int.MaxValue);
+                Vector2Int max = new Vector2Int(int.MinValue, int.MinValue);
                 int validCellCount = 0;
                 for (int i = 0; i < displayCells.Count; i++)
                 {
                     var cell = displayCells[i];
                     if (!owningGrid.InBounds(cell.x, cell.y)) continue;
 
-                    Vector3 world = owningGrid.CellToWorld(cell);
-                    accumulatedWorld += world;
                     validCellCount++;
 
                     if (!firstValidCell.HasValue)
                     {
                         firstValidCell = cell;
                     }
+
+                    if (cell.x < min.x) min.x = cell.x;
+                    if (cell.y < min.y) min.y = cell.y;
+                    if (cell.x > max.x) max.x = cell.x;
+                    if (cell.y > max.y) max.y = cell.y;
                 }
 
                 if (firstValidCell.HasValue && validCellCount > 0)
                 {
-                    Vector3 center = accumulatedWorld / validCellCount;
+                    float width = (max.x - min.x) + 1;
+                    float height = (max.y - min.y) + 1;
+
+                    Vector3 targetSize = new Vector3(width, height, 1f);
+                    Vector2 spriteSize = sprite.bounds.size;
+                    Vector3 scale = new Vector3(
+                        spriteSize.x != 0 ? targetSize.x / spriteSize.x : 1f,
+                        spriteSize.y != 0 ? targetSize.y / spriteSize.y : 1f,
+                        1f);
+
+                    Vector3 center = new Vector3(
+                        min.x + (width * 0.5f),
+                        min.y + (height * 0.5f),
+                        0f);
                     var renderer = EnsureDisplaySprite(activeCount, sprite, sortingLayer, sortingOrder);
                     renderer.transform.position = center + subGridOffset;
+                    renderer.transform.localScale = scale;
                     renderer.transform.rotation = Quaternion.identity;
                     renderer.gameObject.SetActive(true);
                     activeCount = 1;
