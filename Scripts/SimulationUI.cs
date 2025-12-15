@@ -288,7 +288,7 @@ namespace MachineRepair
                     continue;
                 }
 
-                Quaternion targetRotation = Quaternion.FromToRotation(Vector3.right, targetDirection);
+                Quaternion targetRotation = ApplyArrowOrientation(renderer, targetDirection, applyRotation: false);
                 renderer.transform.rotation = Quaternion.RotateTowards(renderer.transform.rotation, targetRotation,
                     arrowRotationSpeed * Time.deltaTime);
                 renderer.transform.localScale = new Vector3(scale, scale, 1f);
@@ -465,12 +465,24 @@ namespace MachineRepair
             activeArrowCount = 0;
         }
 
-        private static void ApplyArrowOrientation(SpriteRenderer renderer, Vector3 direction)
+        private static Quaternion ApplyArrowOrientation(SpriteRenderer renderer, Vector3 direction, bool applyRotation = true)
         {
-            if (renderer == null) return;
+            if (renderer == null) return Quaternion.identity;
 
-            Quaternion targetRotation = Quaternion.FromToRotation(Vector3.right, direction);
-            renderer.transform.rotation = targetRotation;
+            Vector3 constrainedDirection = new Vector3(direction.x, 0f, 0f);
+            if (constrainedDirection.sqrMagnitude <= 0.0001f)
+            {
+                constrainedDirection = Vector3.right;
+            }
+
+            constrainedDirection.Normalize();
+
+            Quaternion targetRotation = Quaternion.FromToRotation(Vector3.right, constrainedDirection);
+            if (applyRotation)
+            {
+                renderer.transform.rotation = targetRotation;
+            }
+            return targetRotation;
         }
 
         private static void SetArrowRendererEnabled(SpriteRenderer renderer, bool enabled)
