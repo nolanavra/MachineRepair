@@ -569,6 +569,7 @@ namespace MachineRepair.Grid
 
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
+            instance.transform.localScale = Vector3.one * def.placedSpriteScale;
 
             ApplyPortMarkers(machine);
 
