@@ -420,6 +420,12 @@ public class InspectorUI : MonoBehaviour
         if (parametersText != null) parametersText.text = value ?? string.Empty;
     }
 
+    public void ToggleInspector(bool? visible = null)
+    {
+        bool targetVisible = visible ?? !IsPanelVisible();
+        SetPanelVisible(targetVisible);
+    }
+
     private void SetPanelVisible(bool visible)
     {
         if (panelRoot != null && panelRoot != gameObject)
@@ -446,6 +452,21 @@ public class InspectorUI : MonoBehaviour
             panelCanvasGroup.interactable = visible;
             panelCanvasGroup.blocksRaycasts = visible;
         }
+    }
+
+    private bool IsPanelVisible()
+    {
+        if (panelRoot != null && panelRoot != gameObject)
+        {
+            return panelRoot.activeSelf;
+        }
+
+        if (panelCanvasGroup != null)
+        {
+            return panelCanvasGroup.alpha > 0f && panelCanvasGroup.interactable;
+        }
+
+        return isActiveAndEnabled;
     }
 
     private void UpdateRemoveButtonState(InputRouter.SelectionInfo selection)
