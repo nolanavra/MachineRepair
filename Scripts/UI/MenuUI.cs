@@ -1,4 +1,3 @@
-using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -18,6 +17,7 @@ namespace MachineRepair
         [SerializeField] private GameModeManager gameModeManager;
         [SerializeField] private SimulationUI simulationUI;
         [SerializeField] private SimulationManager simulationManager;
+        [SerializeField] private CameraGridFocusController gridFocusController;
 
         [Header("Buttons")]
         [SerializeField] private Button inventoryButton;
@@ -33,13 +33,7 @@ namespace MachineRepair
         [SerializeField] private TextMeshProUGUI waterButtonLabel;
         [SerializeField] private TextMeshProUGUI modeLabel;
 
-        [Header("Mode Cycling")]
-        [SerializeField] private GameMode[] modeCycle =
-        {
-            GameMode.Selection,
-            GameMode.WirePlacement,
-            GameMode.PipePlacement
-        };
+        [Header("View Switching")]
         [SerializeField] private UnityEvent viewSwitchRequested;
 
         [Header("Appearance")]
@@ -53,6 +47,7 @@ namespace MachineRepair
             if (simulationUI == null) simulationUI = FindFirstObjectByType<SimulationUI>();
             if (inventoryUI == null) inventoryUI = FindFirstObjectByType<SimpleInventoryUI>();
             if (inspectorUI == null) inspectorUI = FindFirstObjectByType<InspectorUI>();
+            if (gridFocusController == null) gridFocusController = FindFirstObjectByType<CameraGridFocusController>();
         }
 
         private void OnEnable()
@@ -84,24 +79,24 @@ namespace MachineRepair
 
         private void RegisterButtonListeners()
         {
-            if (inventoryButton != null) inventoryButton.onClick.AddListener(OnInventoryClicked);
-            if (inspectorButton != null) inspectorButton.onClick.AddListener(OnInspectorClicked);
-            if (wireModeButton != null) wireModeButton.onClick.AddListener(SetWireMode);
-            if (pipeModeButton != null) pipeModeButton.onClick.AddListener(SetPipeMode);
-            if (powerToggleButton != null) powerToggleButton.onClick.AddListener(TogglePower);
-            if (waterToggleButton != null) waterToggleButton.onClick.AddListener(ToggleWater);
-            if (viewSwitchButton != null) viewSwitchButton.onClick.AddListener(OnViewSwitchClicked);
+            AddButtonListener(inventoryButton, OnInventoryClicked);
+            AddButtonListener(inspectorButton, OnInspectorClicked);
+            AddButtonListener(wireModeButton, SetWireMode);
+            AddButtonListener(pipeModeButton, SetPipeMode);
+            AddButtonListener(powerToggleButton, TogglePower);
+            AddButtonListener(waterToggleButton, ToggleWater);
+            AddButtonListener(viewSwitchButton, OnViewSwitchClicked);
         }
 
         private void UnregisterButtonListeners()
         {
-            if (inventoryButton != null) inventoryButton.onClick.RemoveListener(OnInventoryClicked);
-            if (inspectorButton != null) inspectorButton.onClick.RemoveListener(OnInspectorClicked);
-            if (wireModeButton != null) wireModeButton.onClick.RemoveListener(SetWireMode);
-            if (pipeModeButton != null) pipeModeButton.onClick.RemoveListener(SetPipeMode);
-            if (powerToggleButton != null) powerToggleButton.onClick.RemoveListener(TogglePower);
-            if (waterToggleButton != null) waterToggleButton.onClick.RemoveListener(ToggleWater);
-            if (viewSwitchButton != null) viewSwitchButton.onClick.RemoveListener(OnViewSwitchClicked);
+            RemoveButtonListener(inventoryButton, OnInventoryClicked);
+            RemoveButtonListener(inspectorButton, OnInspectorClicked);
+            RemoveButtonListener(wireModeButton, SetWireMode);
+            RemoveButtonListener(pipeModeButton, SetPipeMode);
+            RemoveButtonListener(powerToggleButton, TogglePower);
+            RemoveButtonListener(waterToggleButton, ToggleWater);
+            RemoveButtonListener(viewSwitchButton, OnViewSwitchClicked);
         }
 
         private void RegisterModeListeners()
@@ -180,19 +175,7 @@ namespace MachineRepair
                 return;
             }
 
-            CycleMode();
-        }
-
-        private void CycleMode()
-        {
-            if (gameModeManager == null || modeCycle == null || modeCycle.Length == 0)
-                return;
-
-            GameMode current = gameModeManager.CurrentMode;
-            int currentIndex = Array.IndexOf(modeCycle, current);
-            int nextIndex = currentIndex >= 0 ? (currentIndex + 1) % modeCycle.Length : 0;
-
-            gameModeManager.SetMode(modeCycle[nextIndex]);
+            gridFocusController?.ToggleFocus();
         }
 
         private void OnPowerToggled(bool state)
@@ -238,6 +221,22 @@ namespace MachineRepair
                 return;
 
             button.targetGraphic.color = selected ? modeSelectedColor : modeDefaultColor;
+        }
+
+        private static void AddButtonListener(Button button, UnityAction action)
+        {
+            if (button == null || action == null)
+                return;
+
+            button.onClick.AddListener(action);
+        }
+
+        private static void RemoveButtonListener(Button button, UnityAction action)
+        {
+            if (button == null || action == null)
+                return;
+
+            button.onClick.RemoveListener(action);
         }
     }
 }
