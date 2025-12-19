@@ -310,7 +310,7 @@ namespace MachineRepair.Grid
                 if (TryPlaceComponentFootprint(component, footprintCells))
                 {
                     ApplyPortMarkers(component);
-                    ApplyDisplaySprites(component, footprintCells.DisplayCells);
+                    ApplyDisplaySprites(component, footprintCells.DisplayCells, def.footprintMask, gridCell, 0);
                 }
             }
         }
@@ -677,7 +677,12 @@ namespace MachineRepair.Grid
                 portMarkerSignalColor);
         }
 
-        public void ApplyDisplaySprites(MachineComponent machine, IReadOnlyList<Vector2Int> displayCells)
+        public void ApplyDisplaySprites(
+            MachineComponent machine,
+            IReadOnlyList<Vector2Int> displayCells,
+            FootprintMask footprintMask,
+            Vector2Int anchorCell,
+            int rotationSteps)
         {
             if (machine == null)
             {
@@ -700,7 +705,10 @@ namespace MachineRepair.Grid
                 displayCells,
                 subGridDisplayOffset + displayTrim,
                 displaySpriteSortingLayer,
-                displaySpriteSortingOrder);
+                displaySpriteSortingOrder,
+                footprintMask,
+                anchorCell,
+                rotationSteps);
         }
 
         #region Placement
@@ -752,7 +760,12 @@ namespace MachineRepair.Grid
                 return false;
             }
 
-            ApplyDisplaySprites(machine, cells.DisplayCells);
+            ApplyDisplaySprites(
+                machine,
+                cells.DisplayCells,
+                currentPlacementDef.footprintMask,
+                anchorCell,
+                currentPlacementRotation);
             SetPlacementHighlightsActive(false);
             ClearPlacementState(false);
             GameModeManager.Instance?.SetMode(GameMode.Selection);
