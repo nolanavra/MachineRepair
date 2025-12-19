@@ -212,6 +212,21 @@ namespace MachineRepair {
             }
         }
 
+        public static bool TryGetFootprintSize(
+            FootprintMask footprintMask,
+            int rotationSteps,
+            out Vector2 size)
+        {
+            if (TryGetFootprintBounds(footprintMask, Vector2Int.zero, rotationSteps, out var min, out var max))
+            {
+                size = new Vector2((max.x - min.x) + 1, (max.y - min.y) + 1);
+                return true;
+            }
+
+            size = default;
+            return false;
+        }
+
         private static bool TryGetFootprintBounds(
             FootprintMask footprintMask,
             Vector2Int anchor,
