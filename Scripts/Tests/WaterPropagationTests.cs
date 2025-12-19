@@ -223,6 +223,51 @@ namespace MachineRepair.Tests
             CollectionAssert.Contains(leakCells, Vector2Int.zero, "Open water port should register as a leak when reached.");
         }
 
+        [Test]
+        public void FlowPropagatesFromHigherPressurePortOnly()
+        {
+            var grid = CreateGrid(2, 1);
+            var sim = CreateSimulationManager(grid);
+
+            var high = CreateWaterComponent(grid, "High", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 100f, 12f);
+            var low = CreateWaterComponent(grid, "Low", ComponentType.ChassisWaterConnection, new Vector2Int(1, 0), 100f, 6f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(high.anchorCell, high));
+            Assert.IsTrue(grid.TryPlaceComponent(low.anchorCell, low));
+
+            var pipe = CreatePipe(high, low, 100f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            }, 12f);
+
+            Assert.IsTrue(grid.AddPipeRun(pipe.occupiedCells, pipe));
+
+            var capturedArrows = new List<SimulationManager.WaterFlowArrow>();
+            sim.WaterFlowUpdated += arrows =>
+            {
+                capturedArrows = arrows == null
+                    ? new List<SimulationManager.WaterFlowArrow>()
+                    : new List<SimulationManager.WaterFlowArrow>(arrows);
+            };
+
+            RunWaterStep(sim);
+            RunWaterStep(sim);
+
+            Assert.AreEqual(1, capturedArrows.Count, "Only one directed water arrow should be present between two connected ports.");
+            Assert.AreEqual(high.anchorCell, capturedArrows[0].StartCell, "Arrow should originate from the higher-pressure port.");
+            Assert.AreEqual(low.anchorCell, capturedArrows[0].EndCell, "Arrow should point toward the lower-pressure port.");
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int highIndex = grid.ToIndex(high.anchorCell);
+            int lowIndex = grid.ToIndex(low.anchorCell);
+
+            Assert.Greater(pressureGraph[highIndex], pressureGraph[lowIndex] + 0.0001f,
+                "Higher-pressure port should retain a greater recorded pressure than the lower-pressure port.");
+        }
+
         private SilentGridManager CreateGrid(int width, int height)
         {
             var gridGO = new GameObject("Grid");
