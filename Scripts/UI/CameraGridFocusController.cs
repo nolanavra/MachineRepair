@@ -12,6 +12,9 @@ public class CameraGridFocusController : MonoBehaviour
     [SerializeField] private Transform mainGridCenter;
     [SerializeField] private Transform subGridCenter;
 
+    [Header("Starting Positions")]
+    [SerializeField] private Vector2 subGridCameraStartPosition;
+
     [Header("Zoom")]
     [SerializeField] private float minOrthographicSize = 3f;
     [SerializeField] private float maxOrthographicSize = 12f;
@@ -50,6 +53,8 @@ public class CameraGridFocusController : MonoBehaviour
     private bool isDragging;
     private Vector3 dragStartWorldPosition;
     private Vector3 cameraStartPosition;
+    private float mainGridZoomSize;
+    private float subGridZoomSize;
 
     private void Awake()
     {
@@ -59,6 +64,7 @@ public class CameraGridFocusController : MonoBehaviour
         }
 
         ClampOrthographicSize();
+        CacheInitialZoomSizes();
     }
 
     private void OnEnable()
@@ -103,6 +109,9 @@ public class CameraGridFocusController : MonoBehaviour
             CenterCamera(mainGridCenter.position);
         }
 
+        CacheActiveZoom();
+        ApplyCachedZoom(mainGridZoomSize);
+
         IsSubGridActive = false;
         UpdateFocusIndicator();
         ApplyFrontViewVisibility();
@@ -110,10 +119,10 @@ public class CameraGridFocusController : MonoBehaviour
 
     public void FocusSubGrid()
     {
-        if (subGridCenter != null)
-        {
-            CenterCamera(subGridCenter.position);
-        }
+        CacheActiveZoom();
+        CenterCamera(new Vector3(subGridCameraStartPosition.x, subGridCameraStartPosition.y));
+
+        ApplyCachedZoom(subGridZoomSize);
 
         IsSubGridActive = true;
         UpdateFocusIndicator();
@@ -174,6 +183,7 @@ public class CameraGridFocusController : MonoBehaviour
 
         float newSize = targetCamera.orthographicSize - (scrollDelta * scrollZoomStep);
         targetCamera.orthographicSize = Mathf.Clamp(newSize, minOrthographicSize, maxOrthographicSize);
+        CacheActiveZoom();
     }
 
     private void ClampOrthographicSize()
@@ -184,6 +194,45 @@ public class CameraGridFocusController : MonoBehaviour
         }
 
         targetCamera.orthographicSize = Mathf.Clamp(targetCamera.orthographicSize, minOrthographicSize, maxOrthographicSize);
+        CacheActiveZoom();
+    }
+
+    private void CacheInitialZoomSizes()
+    {
+        if (targetCamera == null || !targetCamera.orthographic)
+        {
+            return;
+        }
+
+        mainGridZoomSize = targetCamera.orthographicSize;
+        subGridZoomSize = targetCamera.orthographicSize;
+    }
+
+    private void CacheActiveZoom()
+    {
+        if (targetCamera == null || !targetCamera.orthographic)
+        {
+            return;
+        }
+
+        if (IsSubGridActive)
+        {
+            subGridZoomSize = targetCamera.orthographicSize;
+        }
+        else
+        {
+            mainGridZoomSize = targetCamera.orthographicSize;
+        }
+    }
+
+    private void ApplyCachedZoom(float zoomSize)
+    {
+        if (targetCamera == null || !targetCamera.orthographic)
+        {
+            return;
+        }
+
+        targetCamera.orthographicSize = Mathf.Clamp(zoomSize, minOrthographicSize, maxOrthographicSize);
     }
 
     private void HandleMiddleMouseDrag()
