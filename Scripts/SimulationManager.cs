@@ -1202,6 +1202,8 @@ namespace MachineRepair
 
                 propagated = true;
                 EnsurePipeFlowrate(pipe);
+                var orderedCells = GetOrderedPipeCells(pipe, portRef.Cell);
+                if (orderedCells.Count == 0) continue;
 
                 float pipeRemaining = Mathf.Max(0f, 100f - Mathf.Clamp(pipe.fillLevel, 0f, 100f));
                 float permitted = pipe.flowrateMax > 0f ? Mathf.Min(availableFlow, pipe.flowrateMax) : availableFlow;
@@ -1211,18 +1213,18 @@ namespace MachineRepair
                 {
                     pipe.fillLevel = Mathf.Min(100f, pipe.fillLevel + applied);
                     pipe.flow = applied;
-                    StampPipeFlow(pipe, applied, portRef.Cell, stepsFromSource + 1);
+                    StampPipeFlow(pipe, applied, orderedCells, stepsFromSource);
 
-                    var nextCell = GetPipeNextStep(pipe, portRef.Cell);
-                    if (nextCell.HasValue && ShouldSpawnWaterArrow())
+                    if (orderedCells.Count > 1 && ShouldSpawnWaterArrow())
                     {
-                        AddWaterFlowArrowSegments(pipe, portRef.Cell, applied, stepsFromSource + 1);
+                        int arrowSteps = stepsFromSource + CalculatePipeTraversalSteps(orderedCells);
+                        AddWaterFlowArrowSegments(pipe, orderedCells, applied, arrowSteps);
                     }
                 }
 
                 if (pipe.fillLevel >= 100f - Mathf.Epsilon)
                 {
-                    EnqueueOppositePort(pipe, portRef.Cell, permitted, stepsFromSource + 1, waterPorts, queue);
+                    EnqueueOppositePort(pipe, portRef.Cell, orderedCells, permitted, stepsFromSource, waterPorts, queue);
                 }
             }
 
@@ -1310,55 +1312,46 @@ namespace MachineRepair
             }
         }
 
-        private void StampPipeFlow(PlacedPipe pipe, float flow, Vector2Int originCell, int stepsFromSource)
+        private void StampPipeFlow(PlacedPipe pipe, float flow, IReadOnlyList<Vector2Int> orderedCells, int stepsFromSource)
         {
-            if (grid == null || pipe?.occupiedCells == null) return;
+            if (grid == null || pipe == null || orderedCells == null || orderedCells.Count == 0) return;
 
-            foreach (var cell in pipe.occupiedCells)
+            float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
+            int cumulativeSteps = stepsFromSource;
+
+            for (int i = 0; i < orderedCells.Count; i++)
             {
+                var cell = orderedCells[i];
                 if (!grid.InBounds(cell.x, cell.y)) continue;
+
+                if (i > 0)
+                {
+                    cumulativeSteps += GetStepDistance(orderedCells[i - 1], cell);
+                }
+
                 int idx = grid.ToIndex(cell);
-                float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : 0f;
-                int stepsToCell = stepsFromSource + GetStepDistance(originCell, cell);
-                float droppedPressure = CalculatePressureAfterTravel(pressure, stepsToCell);
+                float droppedPressure = CalculatePressureAfterTravel(pressure, cumulativeSteps);
                 flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
                 pressureGraph[idx] = Mathf.Max(pressureGraph[idx], droppedPressure);
 
-                if (waterArrowSteps[idx] == -1 || stepsFromSource < waterArrowSteps[idx])
+                if (waterArrowSteps[idx] == -1 || cumulativeSteps < waterArrowSteps[idx])
                 {
-                    waterArrowSteps[idx] = stepsFromSource;
+                    waterArrowSteps[idx] = cumulativeSteps;
                 }
             }
-        }
-
-        private Vector2Int? GetPipeNextStep(PlacedPipe pipe, Vector2Int fromCell)
-        {
-            if (pipe?.occupiedCells == null) return null;
-
-            for (int i = 0; i < pipe.occupiedCells.Count; i++)
-            {
-                var candidate = pipe.occupiedCells[i];
-                if (candidate == fromCell) continue;
-
-                Vector2Int delta = candidate - fromCell;
-                if (delta != Vector2Int.zero && Mathf.Abs(delta.x) <= 1 && Mathf.Abs(delta.y) <= 1)
-                {
-                    return candidate;
-                }
-            }
-
-            return null;
         }
 
         private void EnqueueOppositePort(
             PlacedPipe pipe,
             Vector2Int fromCell,
+            IReadOnlyList<Vector2Int> orderedCells,
             float availableFlow,
             int stepsFromSource,
             IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
             Queue<FlowFrontier> queue)
         {
             Vector2Int targetCell = fromCell == pipe.startPortCell ? pipe.endPortCell : pipe.startPortCell;
+            int traversalSteps = stepsFromSource + CalculatePipeTraversalSteps(orderedCells);
 
             if (waterPorts.TryGetValue(targetCell, out var targetPort))
             {
@@ -1366,12 +1359,12 @@ namespace MachineRepair
                 {
                     PortRef = targetPort,
                     AvailableFlow = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.Port.flowrateMax)),
-                    StepsFromSource = stepsFromSource
+                    StepsFromSource = traversalSteps
                 });
 
                 if (ShouldSpawnWaterArrow())
                 {
-                    AddWaterFlowArrowSegments(pipe, fromCell, availableFlow, stepsFromSource);
+                    AddWaterFlowArrowSegments(pipe, orderedCells, availableFlow, traversalSteps);
                 }
             }
             else
@@ -1430,36 +1423,28 @@ namespace MachineRepair
             }
         }
 
-        private void AddWaterFlowArrowSegments(PlacedPipe pipe, Vector2Int originCell, float flow, int stepsFromSource)
+        private List<Vector2Int> GetOrderedPipeCells(PlacedPipe pipe, Vector2Int originCell)
         {
-            if (grid == null || pipe?.occupiedCells == null || pipe.occupiedCells.Count < 2) return;
+            var orderedCells = new List<Vector2Int>(pipe?.occupiedCells ?? new List<Vector2Int>());
+            if (orderedCells.Count == 0) return orderedCells;
 
-            EnsurePipeFlowrate(pipe);
-
-            bool originIsStart = originCell == pipe.startPortCell;
-            bool originIsEnd = originCell == pipe.endPortCell;
+            bool originIsStart = originCell == pipe?.startPortCell;
+            bool originIsEnd = originCell == pipe?.endPortCell;
 
             if (!originIsStart && !originIsEnd)
             {
                 if (logWaterFlowPaths)
                 {
-                    Debug.LogWarning($"[SimulationManager] Cannot add water arrows: origin {originCell} is not part of pipe between {pipe.startPortCell} and {pipe.endPortCell}.");
+                    Debug.LogWarning($"[SimulationManager] Cannot order pipe cells: origin {originCell} is not part of pipe between {pipe?.startPortCell} and {pipe?.endPortCell}.");
                 }
-                return;
+
+                orderedCells.Clear();
+                return orderedCells;
             }
 
-            var orderedCells = new List<Vector2Int>(pipe.occupiedCells);
             if (originIsEnd)
             {
                 orderedCells.Reverse();
-            }
-
-            if (orderedCells.Count == 0 || orderedCells[0] != originCell)
-            {
-                if (logWaterFlowPaths)
-                {
-                    Debug.LogWarning($"[SimulationManager] Pipe occupancy ordering mismatch. Expected origin {originCell} at index 0 but found {orderedCells[0]}.");
-                }
             }
 
             int originIndex = orderedCells.IndexOf(originCell);
@@ -1467,6 +1452,37 @@ namespace MachineRepair
             {
                 orderedCells.RemoveRange(0, originIndex);
             }
+            else if (originIndex < 0)
+            {
+                orderedCells.Clear();
+            }
+
+            if (orderedCells.Count > 0 && orderedCells[0] != originCell && logWaterFlowPaths)
+            {
+                Debug.LogWarning($"[SimulationManager] Pipe occupancy ordering mismatch. Expected origin {originCell} at index 0 but found {orderedCells[0]}.");
+            }
+
+            return orderedCells;
+        }
+
+        private static int CalculatePipeTraversalSteps(IReadOnlyList<Vector2Int> orderedCells)
+        {
+            if (orderedCells == null || orderedCells.Count < 2) return 0;
+
+            int steps = 0;
+            for (int i = 1; i < orderedCells.Count; i++)
+            {
+                steps += GetStepDistance(orderedCells[i - 1], orderedCells[i]);
+            }
+
+            return steps;
+        }
+
+        private void AddWaterFlowArrowSegments(PlacedPipe pipe, IReadOnlyList<Vector2Int> orderedCells, float flow, int stepsFromSource)
+        {
+            if (grid == null || pipe == null || orderedCells == null || orderedCells.Count < 2) return;
+
+            EnsurePipeFlowrate(pipe);
 
             float pressure = CalculatePressureAfterTravel(pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure, stepsFromSource);
             float normalizedSpeed = pipe.flowrateMax > 0f ? Mathf.Clamp(flow / pipe.flowrateMax, 0f, 1f) : 0f;

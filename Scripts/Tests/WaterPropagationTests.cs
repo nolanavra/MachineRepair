@@ -162,6 +162,51 @@ namespace MachineRepair.Tests
         }
 
         [Test]
+        public void PressureDropsAcrossPipeLength()
+        {
+            var grid = CreateGrid(4, 1);
+            var sim = CreateSimulationManager(grid);
+            SetPressureDropPerCell(sim, 0.5f);
+
+            const float maxPressure = 12f;
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 100f, maxPressure);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(3, 0), 100f, maxPressure);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var occupied = new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0),
+                new Vector2Int(2, 0),
+                new Vector2Int(3, 0)
+            };
+
+            var pipe = CreatePipe(source, sink, 100f, occupied, maxPressure);
+            Assert.IsTrue(grid.AddPipeRun(pipe.occupiedCells, pipe));
+
+            RunWaterStep(sim);
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int penultimateIndex = grid.ToIndex(pipe.occupiedCells[^2]);
+            int sinkIndex = grid.ToIndex(sink.anchorCell);
+
+            int stepsToPenultimate = CalculatePathSteps(pipe.occupiedCells, pipe.occupiedCells.Count - 2);
+            int stepsToSink = CalculatePathSteps(pipe.occupiedCells, pipe.occupiedCells.Count - 1);
+
+            float expectedPenultimate = Mathf.Max(0f, maxPressure - 0.5f * stepsToPenultimate);
+            float expectedSink = Mathf.Max(0f, maxPressure - 0.5f * stepsToSink);
+
+            Assert.That(pressureGraph[penultimateIndex], Is.EqualTo(expectedPenultimate).Within(0.001f),
+                "Pressure should decline according to distance traveled along the pipe.");
+            Assert.That(pressureGraph[sinkIndex], Is.EqualTo(expectedSink).Within(0.001f),
+                "Downstream port pressure should reflect the full traversal distance.");
+        }
+
+        [Test]
         public void UnconnectedWaterPortGeneratesLeak()
         {
             var grid = CreateGrid(1, 1);
@@ -222,7 +267,8 @@ namespace MachineRepair.Tests
             string name,
             ComponentType type,
             Vector2Int anchor,
-            float portFlow)
+            float portFlow,
+            float maxPressure = 10f)
         {
             var go = new GameObject(name);
             createdObjects.Add(go);
@@ -245,7 +291,7 @@ namespace MachineRepair.Tests
             thingDef.displayName = name;
             thingDef.componentType = type;
             thingDef.water = true;
-            thingDef.maxPressure = 10f;
+            thingDef.maxPressure = maxPressure;
             thingDef.footprintMask = new FootprintMask
             {
                 width = 1,
@@ -270,7 +316,8 @@ namespace MachineRepair.Tests
             MachineComponent start,
             MachineComponent end,
             float flowrate,
-            List<Vector2Int> occupiedCells)
+            List<Vector2Int> occupiedCells,
+            float maxPressure = 10f)
         {
             var go = new GameObject("Pipe");
             createdObjects.Add(go);
@@ -278,6 +325,7 @@ namespace MachineRepair.Tests
             var pipe = go.AddComponent<PlacedPipe>();
             pipe.pipeDef = ScriptableObject.CreateInstance<PipeDef>();
             pipe.pipeDef.maxFlow = flowrate;
+            pipe.pipeDef.maxPressure = maxPressure;
             createdObjects.Add(pipe.pipeDef);
             pipe.startComponent = start;
             pipe.endComponent = end;
@@ -285,6 +333,7 @@ namespace MachineRepair.Tests
             pipe.endPortCell = end.anchorCell;
             pipe.occupiedCells = occupiedCells;
             pipe.flowrateMax = flowrate;
+            pipe.pressure = maxPressure;
             pipe.fillLevel = 0f;
 
             return pipe;
@@ -303,6 +352,21 @@ namespace MachineRepair.Tests
             return length;
         }
 
+        private static int CalculatePathSteps(IReadOnlyList<Vector2Int> cells, int inclusiveEndIndex)
+        {
+            int steps = 0;
+            if (cells == null) return steps;
+
+            for (int i = 1; i <= inclusiveEndIndex && i < cells.Count; i++)
+            {
+                var previous = cells[i - 1];
+                var current = cells[i];
+                steps += Mathf.Max(Mathf.Abs(current.x - previous.x), Mathf.Abs(current.y - previous.y));
+            }
+
+            return steps;
+        }
+
         private float GetComponentFill(SimulationManager sim, MachineComponent component)
         {
             var fillDict = typeof(SimulationManager)
@@ -315,6 +379,19 @@ namespace MachineRepair.Tests
             }
 
             return 0f;
+        }
+
+        private float[] GetPressureGraph(SimulationManager sim)
+        {
+            return typeof(SimulationManager)
+                .GetField("pressureGraph", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(sim) as float[];
+        }
+
+        private void SetPressureDropPerCell(SimulationManager sim, float drop)
+        {
+            var field = typeof(SimulationManager).GetField("pressureDropPerCell", BindingFlags.NonPublic | BindingFlags.Instance);
+            field?.SetValue(sim, drop);
         }
 
         private void RunWaterStep(SimulationManager sim)
