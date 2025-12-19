@@ -268,6 +268,96 @@ namespace MachineRepair.Tests
                 "Higher-pressure port should retain a greater recorded pressure than the lower-pressure port.");
         }
 
+        [Test]
+        public void PumpBoostsPressureWhenPowered()
+        {
+            var grid = CreateGrid(5, 1);
+            var sim = CreateSimulationManager(grid);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 100f, 6f);
+            var pump = CreatePumpComponent(grid, "Pump", new Vector2Int(1, 0), 100f, 6f, 12f, requiresPower: true);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(4, 0), 100f, 6f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(pump.anchorCell, pump));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var inletPipe = CreatePipe(source, pump, 100f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            }, 12f, endPortCellOverride: pump.anchorCell);
+            var outletPipe = CreatePipe(pump, sink, 100f, new List<Vector2Int>
+            {
+                new Vector2Int(2, 0),
+                new Vector2Int(3, 0),
+                new Vector2Int(4, 0)
+            }, 12f, startPortCellOverride: new Vector2Int(2, 0), endPortCellOverride: sink.anchorCell);
+
+            Assert.IsTrue(grid.AddPipeRun(inletPipe.occupiedCells, inletPipe));
+            Assert.IsTrue(grid.AddPipeRun(outletPipe.occupiedCells, outletPipe));
+
+            var poweredComponents = typeof(SimulationManager)
+                .GetField("poweredComponents", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(sim) as HashSet<MachineComponent>;
+            poweredComponents?.Add(pump);
+            pump.SetPowered(true);
+
+            RunWaterStep(sim);
+            RunWaterStep(sim);
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int sourceIndex = grid.ToIndex(source.anchorCell);
+            int sinkIndex = grid.ToIndex(sink.anchorCell);
+
+            Assert.Greater(pressureGraph[sinkIndex], pressureGraph[sourceIndex] + 0.001f,
+                "Powered pump should raise downstream pressure above the upstream source.");
+        }
+
+        [Test]
+        public void PumpDoesNotBoostWhenUnpowered()
+        {
+            var grid = CreateGrid(5, 1);
+            var sim = CreateSimulationManager(grid);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 100f, 6f);
+            var pump = CreatePumpComponent(grid, "Pump", new Vector2Int(1, 0), 100f, 6f, 12f, requiresPower: true);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(4, 0), 100f, 6f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(pump.anchorCell, pump));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var inletPipe = CreatePipe(source, pump, 100f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            }, 12f, endPortCellOverride: pump.anchorCell);
+            var outletPipe = CreatePipe(pump, sink, 100f, new List<Vector2Int>
+            {
+                new Vector2Int(2, 0),
+                new Vector2Int(3, 0),
+                new Vector2Int(4, 0)
+            }, 12f, startPortCellOverride: new Vector2Int(2, 0), endPortCellOverride: sink.anchorCell);
+
+            Assert.IsTrue(grid.AddPipeRun(inletPipe.occupiedCells, inletPipe));
+            Assert.IsTrue(grid.AddPipeRun(outletPipe.occupiedCells, outletPipe));
+
+            RunWaterStep(sim);
+            RunWaterStep(sim);
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int sourceIndex = grid.ToIndex(source.anchorCell);
+            int sinkIndex = grid.ToIndex(sink.anchorCell);
+
+            Assert.LessOrEqual(pressureGraph[sinkIndex], pressureGraph[sourceIndex] + 0.001f,
+                "Unpowered pump should not raise downstream pressure above the upstream source.");
+        }
+
         private SilentGridManager CreateGrid(int width, int height)
         {
             var gridGO = new GameObject("Grid");
@@ -357,12 +447,80 @@ namespace MachineRepair.Tests
             return component;
         }
 
+        private MachineComponent CreatePumpComponent(
+            GridManager grid,
+            string name,
+            Vector2Int anchor,
+            float portFlow,
+            float inputMaxPressure,
+            float outputPressure,
+            bool requiresPower)
+        {
+            var go = new GameObject(name);
+            createdObjects.Add(go);
+
+            var machineComponent = go.AddComponent<MachineComponent>();
+            var pumpComponent = go.AddComponent<PumpComponent>();
+
+            pumpComponent.OutputPressure = outputPressure;
+            pumpComponent.RequiresPower = requiresPower;
+            pumpComponent.UseAbsoluteOutput = true;
+            pumpComponent.PressureBoost = 0f;
+
+            var portDef = ScriptableObject.CreateInstance<PortDef>();
+            portDef.ports = new[]
+            {
+                new PortLocal
+                {
+                    cell = Vector2Int.zero,
+                    portType = PortType.Water,
+                    internalConnectionIndices = new[] { 1 },
+                    flowrateMax = portFlow
+                },
+                new PortLocal
+                {
+                    cell = new Vector2Int(1, 0),
+                    portType = PortType.Water,
+                    internalConnectionIndices = new[] { 0 },
+                    flowrateMax = portFlow
+                }
+            };
+            createdObjects.Add(portDef);
+
+            var thingDef = ScriptableObject.CreateInstance<ThingDef>();
+            thingDef.displayName = name;
+            thingDef.componentType = ComponentType.Pump;
+            thingDef.water = true;
+            thingDef.power = requiresPower;
+            thingDef.maxPressure = inputMaxPressure;
+            thingDef.footprintMask = new FootprintMask
+            {
+                width = 2,
+                height = 1,
+                origin = Vector2Int.zero,
+                occupied = new[] { true, true },
+                display = new[] { false, false },
+                connectedPorts = portDef
+            };
+            createdObjects.Add(thingDef);
+
+            machineComponent.def = thingDef;
+            machineComponent.grid = grid;
+            machineComponent.anchorCell = anchor;
+            machineComponent.portDef = portDef;
+            machineComponent.footprint = thingDef.footprintMask;
+
+            return machineComponent;
+        }
+
         private PlacedPipe CreatePipe(
             MachineComponent start,
             MachineComponent end,
             float flowrate,
             List<Vector2Int> occupiedCells,
-            float maxPressure = 10f)
+            float maxPressure = 10f,
+            Vector2Int? startPortCellOverride = null,
+            Vector2Int? endPortCellOverride = null)
         {
             var go = new GameObject("Pipe");
             createdObjects.Add(go);
@@ -374,8 +532,8 @@ namespace MachineRepair.Tests
             createdObjects.Add(pipe.pipeDef);
             pipe.startComponent = start;
             pipe.endComponent = end;
-            pipe.startPortCell = start.anchorCell;
-            pipe.endPortCell = end.anchorCell;
+            pipe.startPortCell = startPortCellOverride ?? start.anchorCell;
+            pipe.endPortCell = endPortCellOverride ?? end.anchorCell;
             pipe.occupiedCells = occupiedCells;
             pipe.flowrateMax = flowrate;
             pipe.pressure = maxPressure;
