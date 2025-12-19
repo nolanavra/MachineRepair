@@ -17,8 +17,9 @@ public class CameraGridFocusController : MonoBehaviour
 
     [Header("Zoom")]
     [SerializeField] private float minOrthographicSize = 3f;
-    [SerializeField] private float maxOrthographicSize = 12f;
+    [SerializeField] private float maxOrthographicSize = 25f;
     [SerializeField] private float scrollZoomStep = 0.1f;
+    [SerializeField] private float mainGridInitialOrthographicSize = 19f;
 
     [Header("Pan")]
     [SerializeField] private PanBounds mainGridPanBounds = new(-5f, 5f, -3f, 3f);
@@ -63,6 +64,7 @@ public class CameraGridFocusController : MonoBehaviour
             targetCamera = Camera.main;
         }
 
+        ApplyInitialMainGridZoom();
         ClampOrthographicSize();
         CacheInitialZoomSizes();
     }
@@ -204,8 +206,22 @@ public class CameraGridFocusController : MonoBehaviour
             return;
         }
 
-        mainGridZoomSize = targetCamera.orthographicSize;
+        if (Mathf.Approximately(mainGridZoomSize, 0f))
+        {
+            mainGridZoomSize = targetCamera.orthographicSize;
+        }
         subGridZoomSize = targetCamera.orthographicSize;
+    }
+
+    private void ApplyInitialMainGridZoom()
+    {
+        if (targetCamera == null || !targetCamera.orthographic)
+        {
+            return;
+        }
+
+        mainGridZoomSize = Mathf.Clamp(mainGridInitialOrthographicSize, minOrthographicSize, maxOrthographicSize);
+        targetCamera.orthographicSize = mainGridZoomSize;
     }
 
     private void CacheActiveZoom()
