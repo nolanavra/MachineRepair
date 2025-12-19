@@ -569,11 +569,31 @@ namespace MachineRepair.Grid
 
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
-            instance.transform.localScale = Vector3.one * def.placedSpriteScale;
+            var renderer = instance.GetComponent<SpriteRenderer>() ?? instance.GetComponentInChildren<SpriteRenderer>();
+            Vector3 scale = CalculateSpriteScale(renderer != null ? renderer.sprite : def.sprite, def.footprintMask, rotationSteps, def.placedSpriteScale);
+            (renderer != null ? renderer.transform : instance.transform).localScale = scale;
 
             ApplyPortMarkers(machine);
 
             return machine;
+        }
+
+        private Vector3 CalculateSpriteScale(Sprite sprite, FootprintMask footprintMask, int rotationSteps, float scaleMultiplier)
+        {
+            if (sprite != null
+                && MachineComponent.TryGetFootprintSize(footprintMask, rotationSteps, out var footprintSize))
+            {
+                Vector2 spriteSize = sprite.bounds.size;
+                if (spriteSize.x > 0f && spriteSize.y > 0f)
+                {
+                    return new Vector3(
+                        footprintSize.x / spriteSize.x,
+                        footprintSize.y / spriteSize.y,
+                        1f) * scaleMultiplier;
+                }
+            }
+
+            return Vector3.one * scaleMultiplier;
         }
 
         private void BuildComponentPrefabLookup()
@@ -891,7 +911,11 @@ namespace MachineRepair.Grid
                 : currentPlacementDef.sprite;
             placementPreviewRenderer.color = new Color(tint.r, tint.g, tint.b, 0.5f);
             placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
-            placementPreviewRenderer.transform.localScale = Vector3.one * currentPlacementDef.placedSpriteScale;
+            placementPreviewRenderer.transform.localScale = CalculateSpriteScale(
+                placementPreviewRenderer.sprite,
+                currentPlacementDef.footprintMask,
+                currentPlacementRotation,
+                currentPlacementDef.placedSpriteScale);
             placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentPlacementRotation);
             placementPreviewRenderer.transform.position = GetFootprintCenterWorld(cells);
             SetPlacementPreviewActive(true);
