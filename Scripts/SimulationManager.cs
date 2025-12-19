@@ -902,8 +902,8 @@ namespace MachineRepair
                 float availableFlow = Mathf.Min(frontier.AvailableFlow, Mathf.Max(0f, portRef.Port.flowrateMax));
                 if (availableFlow <= 0f) continue;
 
-                float portPressure = CalculatePressureAfterTravel(portRef.Component?.def?.maxPressure ?? 0f, frontier.StepsFromSource);
-                TrackPortPressure(portPressures, portRef.Cell, portPressure);
+                float currentPressure = ResolveFrontierPressure(portRef, portPressures, frontier.StepsFromSource);
+                TrackPortPressure(portPressures, portRef.Cell, currentPressure);
 
                 float componentFill = GetComponentFill(portRef.Component);
                 float remainingComponent = Mathf.Max(0f, 100f - componentFill);
@@ -912,7 +912,7 @@ namespace MachineRepair
                     float applied = Mathf.Min(availableFlow, remainingComponent);
                     componentFill = Mathf.Min(100f, componentFill + applied);
                     SetComponentFill(portRef.Component, componentFill);
-                    StampCellFlow(portRef.Cell, applied, portPressure, frontier.StepsFromSource);
+                    StampCellFlow(portRef.Cell, applied, currentPressure, frontier.StepsFromSource);
 
                     if (componentFill < 100f - Mathf.Epsilon)
                     {
@@ -920,16 +920,26 @@ namespace MachineRepair
                     }
                 }
 
-                StampCellFlow(portRef.Cell, availableFlow, portPressure, frontier.StepsFromSource);
+                float propagatedPressure = currentPressure;
+                int propagatedSteps = frontier.StepsFromSource;
+
+                if (TryComputePumpPressure(portRef.Component, currentPressure, out var boostedPressure))
+                {
+                    propagatedPressure = boostedPressure;
+                    propagatedSteps = 0;
+                    TrackPortPressure(portPressures, portRef.Cell, propagatedPressure);
+                }
+
+                StampCellFlow(portRef.Cell, availableFlow, propagatedPressure, propagatedSteps);
                 processedPorts.Add(portRef.Cell);
 
-                bool propagatedToPipe = TryPushFlowIntoPipes(portRef, availableFlow, frontier.StepsFromSource, portPressure, waterPorts, portPressures, queue);
+                bool propagatedToPipe = TryPushFlowIntoPipes(portRef, availableFlow, propagatedSteps, propagatedPressure, waterPorts, portPressures, queue);
                 if (!propagatedToPipe)
                 {
                     RecordLeak(portRef.Cell);
                 }
 
-                PropagateInternalConnections(portRef, availableFlow, frontier.StepsFromSource, portPressure, waterPorts, portPressures, queue);
+                PropagateInternalConnections(portRef, availableFlow, propagatedSteps, propagatedPressure, waterPorts, portPressures, queue);
             }
 
             NotifyLeakListeners();
@@ -1156,6 +1166,53 @@ namespace MachineRepair
                     }
                 }
             }
+        }
+
+        private float ResolveFrontierPressure(WaterPortRef portRef, Dictionary<Vector2Int, float> portPressures, int stepsFromSource)
+        {
+            float recorded = GetPortPressure(portPressures, portRef.Cell);
+            if (!float.IsNegativeInfinity(recorded))
+            {
+                return recorded;
+            }
+
+            float sourcePressure = portRef.Component?.def?.maxPressure ?? 0f;
+            return CalculatePressureAfterTravel(sourcePressure, stepsFromSource);
+        }
+
+        private bool TryComputePumpPressure(MachineComponent component, float incomingPressure, out float boostedPressure)
+        {
+            boostedPressure = incomingPressure;
+
+            if (component == null || component.def == null || component.def.componentType != ComponentType.Pump)
+            {
+                return false;
+            }
+
+            var pump = component.GetComponent<PumpComponent>();
+            if (pump == null)
+            {
+                return false;
+            }
+
+            if (GetComponentFill(component) < 100f - Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            if (pump.RequiresPower && !poweredComponents.Contains(component))
+            {
+                return false;
+            }
+
+            float candidate = pump.GetOutputPressure(incomingPressure);
+            if (!IsHigherPressure(candidate, incomingPressure))
+            {
+                return false;
+            }
+
+            boostedPressure = candidate;
+            return true;
         }
 
         private void CleanupComponentFillLevels()
