@@ -152,7 +152,10 @@ namespace MachineRepair {
             IReadOnlyList<Vector2Int> displayCells,
             Vector3 subGridOffset,
             string sortingLayer,
-            int sortingOrder)
+            int sortingOrder,
+            FootprintMask footprintMask,
+            Vector2Int anchor,
+            int rotationSteps)
         {
             if (displaySprites == null) displaySprites = new List<SpriteRenderer>();
 
@@ -161,29 +164,21 @@ namespace MachineRepair {
             {
                 EnsureDisplaySpriteParent();
 
-                Vector2Int? firstValidCell = null;
-                Vector2Int min = new Vector2Int(int.MaxValue, int.MaxValue);
-                Vector2Int max = new Vector2Int(int.MinValue, int.MinValue);
-                int validCellCount = 0;
-                for (int i = 0; i < displayCells.Count; i++)
+                bool hasValidDisplayCell = false;
+                if (displayCells != null)
                 {
-                    var cell = displayCells[i];
-                    if (!owningGrid.InBounds(cell.x, cell.y)) continue;
-
-                    validCellCount++;
-
-                    if (!firstValidCell.HasValue)
+                    for (int i = 0; i < displayCells.Count; i++)
                     {
-                        firstValidCell = cell;
+                        var cell = displayCells[i];
+                        if (owningGrid.InBounds(cell.x, cell.y))
+                        {
+                            hasValidDisplayCell = true;
+                            break;
+                        }
                     }
-
-                    if (cell.x < min.x) min.x = cell.x;
-                    if (cell.y < min.y) min.y = cell.y;
-                    if (cell.x > max.x) max.x = cell.x;
-                    if (cell.y > max.y) max.y = cell.y;
                 }
 
-                if (firstValidCell.HasValue && validCellCount > 0)
+                if (hasValidDisplayCell && TryGetFootprintBounds(footprintMask, anchor, rotationSteps, out var min, out var max))
                 {
                     float width = (max.x - min.x) + 1;
                     float height = (max.y - min.y) + 1;
@@ -215,6 +210,52 @@ namespace MachineRepair {
                     displaySprites[i].gameObject.SetActive(false);
                 }
             }
+        }
+
+        private static bool TryGetFootprintBounds(
+            FootprintMask footprintMask,
+            Vector2Int anchor,
+            int rotationSteps,
+            out Vector2Int min,
+            out Vector2Int max)
+        {
+            min = default;
+            max = default;
+
+            if (footprintMask.width <= 0 || footprintMask.height <= 0)
+            {
+                return false;
+            }
+
+            Vector2Int localMin = new Vector2Int(-footprintMask.origin.x, -footprintMask.origin.y);
+            Vector2Int localMax = new Vector2Int(
+                footprintMask.width - footprintMask.origin.x - 1,
+                footprintMask.height - footprintMask.origin.y - 1);
+
+            Vector2Int[] corners = new[]
+            {
+                localMin,
+                new Vector2Int(localMin.x, localMax.y),
+                new Vector2Int(localMax.x, localMin.y),
+                localMax
+            };
+
+            int normalizedRotation = ((rotationSteps % 4) + 4) % 4;
+            Vector2Int rotatedMin = new Vector2Int(int.MaxValue, int.MaxValue);
+            Vector2Int rotatedMax = new Vector2Int(int.MinValue, int.MinValue);
+
+            for (int i = 0; i < corners.Length; i++)
+            {
+                var rotated = RotateOffset(corners[i], normalizedRotation);
+                if (rotated.x < rotatedMin.x) rotatedMin.x = rotated.x;
+                if (rotated.y < rotatedMin.y) rotatedMin.y = rotated.y;
+                if (rotated.x > rotatedMax.x) rotatedMax.x = rotated.x;
+                if (rotated.y > rotatedMax.y) rotatedMax.y = rotated.y;
+            }
+
+            min = rotatedMin + anchor;
+            max = rotatedMax + anchor;
+            return true;
         }
 
         public void DestroyDisplaySprites()
@@ -336,4 +377,3 @@ namespace MachineRepair {
     }
 
 }
-
