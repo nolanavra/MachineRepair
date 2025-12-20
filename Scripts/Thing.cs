@@ -155,7 +155,8 @@ namespace MachineRepair {
             int sortingOrder,
             FootprintMask footprintMask,
             Vector2Int anchor,
-            int rotationSteps)
+            int rotationSteps,
+            bool constrainToFootprint)
         {
             if (displaySprites == null) displaySprites = new List<SpriteRenderer>();
 
@@ -183,20 +184,27 @@ namespace MachineRepair {
                     float width = (max.x - min.x) + 1;
                     float height = (max.y - min.y) + 1;
 
-                    Vector3 targetSize = new Vector3(width, height, 1f);
-                    Vector2 spriteSize = sprite.bounds.size;
-                    Vector3 scale = new Vector3(
-                        spriteSize.x != 0 ? targetSize.x / spriteSize.x : 1f,
-                        spriteSize.y != 0 ? targetSize.y / spriteSize.y : 1f,
-                        1f);
-
                     Vector3 center = new Vector3(
                         min.x + (width * 0.5f),
                         min.y + (height * 0.5f),
                         0f);
                     var renderer = EnsureDisplaySprite(activeCount, sprite, sortingLayer, sortingOrder);
                     renderer.transform.position = center + subGridOffset;
-                    renderer.transform.localScale = scale;
+
+                    if (constrainToFootprint)
+                    {
+                        Vector3 targetSize = new Vector3(width, height, 1f);
+                        Vector2 spriteSize = sprite.bounds.size;
+                        renderer.transform.localScale = new Vector3(
+                            spriteSize.x != 0 ? targetSize.x / spriteSize.x : 1f,
+                            spriteSize.y != 0 ? targetSize.y / spriteSize.y : 1f,
+                            1f);
+                    }
+                    else
+                    {
+                        renderer.transform.localScale = Vector3.one;
+                    }
+
                     renderer.transform.rotation = Quaternion.identity;
                     renderer.gameObject.SetActive(true);
                     activeCount = 1;

@@ -570,30 +570,46 @@ namespace MachineRepair.Grid
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
             var renderer = instance.GetComponent<SpriteRenderer>() ?? instance.GetComponentInChildren<SpriteRenderer>();
-            Vector3 scale = CalculateSpriteScale(renderer != null ? renderer.sprite : def.sprite, def.footprintMask, rotationSteps, def.placedSpriteScale);
-            (renderer != null ? renderer.transform : instance.transform).localScale = scale;
+            var targetTransform = renderer != null ? renderer.transform : instance.transform;
+            Vector3 scale = CalculateSpriteScale(
+                renderer != null ? renderer.sprite : def.sprite,
+                def.footprintMask,
+                rotationSteps,
+                def.placedSpriteScale,
+                def.constrainPlacedSpriteToFootprint,
+                targetTransform.localScale);
+            targetTransform.localScale = scale;
 
             ApplyPortMarkers(machine);
 
             return machine;
         }
 
-        private Vector3 CalculateSpriteScale(Sprite sprite, FootprintMask footprintMask, int rotationSteps, float scaleMultiplier)
+        private Vector3 CalculateSpriteScale(
+            Sprite sprite,
+            FootprintMask footprintMask,
+            int rotationSteps,
+            float scaleMultiplier,
+            bool constrainToFootprint,
+            Vector3 baseScale)
         {
-            if (sprite != null
+            Vector3 scale = baseScale;
+
+            if (constrainToFootprint
+                && sprite != null
                 && MachineComponent.TryGetFootprintSize(footprintMask, rotationSteps, out var footprintSize))
             {
                 Vector2 spriteSize = sprite.bounds.size;
                 if (spriteSize.x > 0f && spriteSize.y > 0f)
                 {
-                    return new Vector3(
+                    scale = new Vector3(
                         footprintSize.x / spriteSize.x,
                         footprintSize.y / spriteSize.y,
-                        1f) * scaleMultiplier;
+                        1f);
                 }
             }
 
-            return Vector3.one * scaleMultiplier;
+            return scale * scaleMultiplier;
         }
 
         private void BuildComponentPrefabLookup()
@@ -728,7 +744,8 @@ namespace MachineRepair.Grid
                 displaySpriteSortingOrder,
                 footprintMask,
                 anchorCell,
-                rotationSteps);
+                rotationSteps,
+                machine.def == null || machine.def.constrainDisplaySpriteToFootprint);
         }
 
         #region Placement
@@ -911,11 +928,14 @@ namespace MachineRepair.Grid
                 : currentPlacementDef.sprite;
             placementPreviewRenderer.color = new Color(tint.r, tint.g, tint.b, 0.5f);
             placementPreviewRenderer.sortingOrder = currentPlacementDef.placedSortingOrder;
+            var previewBaseScale = Vector3.one;
             placementPreviewRenderer.transform.localScale = CalculateSpriteScale(
                 placementPreviewRenderer.sprite,
                 currentPlacementDef.footprintMask,
                 currentPlacementRotation,
-                currentPlacementDef.placedSpriteScale);
+                currentPlacementDef.placedSpriteScale,
+                currentPlacementDef.constrainPlacedSpriteToFootprint,
+                previewBaseScale);
             placementPreviewRenderer.transform.rotation = Quaternion.Euler(0f, 0f, -90f * currentPlacementRotation);
             placementPreviewRenderer.transform.position = GetFootprintCenterWorld(cells);
             SetPlacementPreviewActive(true);

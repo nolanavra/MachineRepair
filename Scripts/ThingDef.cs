@@ -65,6 +65,10 @@ namespace MachineRepair{
         public float displayTrimX = 0f;
         public float displayTrimY = 0f;
         [Header("Visual Tweaks for placed sprite")]
+        [Tooltip("When true, automatically scale the placed sprite to the ThingDef footprint; when false, keep the prefab/local scale and only apply placedSpriteScale.")]
+        public bool constrainPlacedSpriteToFootprint = true;
+        [Tooltip("When true, display sprites are sized to the footprint bounds; when false, keep the authored sprite scale.")]
+        public bool constrainDisplaySpriteToFootprint = true;
         public float placedSpriteScale = 1f;
         public int placedSortingOrder = 200;
 
