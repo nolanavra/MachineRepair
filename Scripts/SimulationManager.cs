@@ -1275,7 +1275,7 @@ namespace MachineRepair
                 Vector2Int farCell = portRef.Cell == pipe.startPortCell ? pipe.endPortCell : pipe.startPortCell;
                 float knownTargetPressure = GetPortPressure(portPressures, farCell);
                 float projectedEndPressure = CalculatePressureAfterTravel(sourcePressure, traversalSteps);
-                if (!IsHigherPressure(projectedEndPressure, knownTargetPressure))
+                if (IsHigherPressure(knownTargetPressure, projectedEndPressure))
                 {
                     continue;
                 }
@@ -1518,18 +1518,18 @@ namespace MachineRepair
             {
                 float targetPressure = exitPressure;
                 float existingPressure = GetPortPressure(portPressures, targetCell);
-                if (!IsHigherPressure(targetPressure, existingPressure))
+                if (IsHigherPressure(existingPressure, targetPressure))
                 {
                     return;
                 }
 
-                TrackPortPressure(portPressures, targetCell, targetPressure);
                 queue.Enqueue(new FlowFrontier
                 {
                     PortRef = targetPort,
                     AvailableFlow = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.Port.flowrateMax)),
                     StepsFromSource = totalSteps
                 });
+                TrackPortPressure(portPressures, targetCell, targetPressure);
 
                 if (ShouldSpawnWaterArrow())
                 {

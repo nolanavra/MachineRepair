@@ -68,6 +68,33 @@ namespace MachineRepair.Tests
         }
 
         [Test]
+        public void FilledPipeEnqueuesOppositePortAtRecordedPressure()
+        {
+            var grid = CreateGrid(2, 1);
+            var sim = CreateSimulationManager(grid);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 150f);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(1, 0), 100f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var pipe = CreatePipe(source, sink, 150f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            });
+
+            Assert.IsTrue(grid.AddPipeRun(pipe.occupiedCells, pipe));
+
+            RunWaterStep(sim);
+
+            Assert.That(pipe.fillLevel, Is.EqualTo(100f).Within(0.01f), "Pipe should fill completely in one step when capacity allows.");
+            Assert.Greater(GetComponentFill(sim, sink), 0f,
+                "Pipe that filled the same step should enqueue and deliver flow to the opposite port even when pressure was already recorded.");
+        }
+
+        [Test]
         public void WaterArrowsCoverFullRunLength()
         {
             var grid = CreateGrid(3, 1);
