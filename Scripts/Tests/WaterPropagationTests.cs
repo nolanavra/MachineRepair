@@ -207,6 +207,98 @@ namespace MachineRepair.Tests
         }
 
         [Test]
+        public void PumpRaisesPressureWhenPowered()
+        {
+            var grid = CreateGrid(3, 1);
+            var sim = CreateSimulationManager(grid);
+            SetPressureDropPerCell(sim, 0.5f);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 30f, 8f);
+            var pump = CreatePump(grid, "Pump", new Vector2Int(1, 0), 30f, 16f);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(2, 0), 30f, 24f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(pump.anchorCell, pump));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var toPump = CreatePipe(source, pump, 30f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            }, 24f);
+
+            var fromPump = CreatePipe(pump, sink, 30f, new List<Vector2Int>
+            {
+                new Vector2Int(1, 0),
+                new Vector2Int(2, 0)
+            }, 24f);
+
+            Assert.IsTrue(grid.AddPipeRun(toPump.occupiedCells, toPump));
+            Assert.IsTrue(grid.AddPipeRun(fromPump.occupiedCells, fromPump));
+
+            MarkPowered(sim, pump);
+
+            for (int i = 0; i < 5; i++)
+            {
+                RunWaterStep(sim);
+            }
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int sourceIndex = grid.ToIndex(source.anchorCell);
+            int sinkIndex = grid.ToIndex(sink.anchorCell);
+
+            Assert.Greater(pressureGraph[sinkIndex], pressureGraph[sourceIndex],
+                "Powered pump should elevate downstream pressure above the supply.");
+        }
+
+        [Test]
+        public void UnpoweredPumpDoesNotBoostPressure()
+        {
+            var grid = CreateGrid(3, 1);
+            var sim = CreateSimulationManager(grid);
+            SetPressureDropPerCell(sim, 0.5f);
+
+            var source = CreateWaterComponent(grid, "Source", ComponentType.ChassisWaterConnection, new Vector2Int(0, 0), 30f, 8f);
+            var pump = CreatePump(grid, "Pump", new Vector2Int(1, 0), 30f, 16f);
+            var sink = CreateWaterComponent(grid, "Sink", ComponentType.Boiler, new Vector2Int(2, 0), 30f, 24f);
+
+            Assert.IsTrue(grid.TryPlaceComponent(source.anchorCell, source));
+            Assert.IsTrue(grid.TryPlaceComponent(pump.anchorCell, pump));
+            Assert.IsTrue(grid.TryPlaceComponent(sink.anchorCell, sink));
+
+            var toPump = CreatePipe(source, pump, 30f, new List<Vector2Int>
+            {
+                new Vector2Int(0, 0),
+                new Vector2Int(1, 0)
+            }, 24f);
+
+            var fromPump = CreatePipe(pump, sink, 30f, new List<Vector2Int>
+            {
+                new Vector2Int(1, 0),
+                new Vector2Int(2, 0)
+            }, 24f);
+
+            Assert.IsTrue(grid.AddPipeRun(toPump.occupiedCells, toPump));
+            Assert.IsTrue(grid.AddPipeRun(fromPump.occupiedCells, fromPump));
+
+            for (int i = 0; i < 5; i++)
+            {
+                RunWaterStep(sim);
+            }
+
+            var pressureGraph = GetPressureGraph(sim);
+            Assert.IsNotNull(pressureGraph);
+
+            int sourceIndex = grid.ToIndex(source.anchorCell);
+            int sinkIndex = grid.ToIndex(sink.anchorCell);
+
+            Assert.LessOrEqual(pressureGraph[sinkIndex], pressureGraph[sourceIndex],
+                "Unpowered pump should not raise downstream pressure.");
+        }
+
+        [Test]
         public void UnconnectedWaterPortGeneratesLeak()
         {
             var grid = CreateGrid(1, 1);
@@ -312,6 +404,30 @@ namespace MachineRepair.Tests
             return component;
         }
 
+        private MachineComponent CreatePump(
+            GridManager grid,
+            string name,
+            Vector2Int anchor,
+            float portFlow,
+            float outputPressure,
+            bool requiresPower = true,
+            float pressureBoost = 0f)
+        {
+            var component = CreateWaterComponent(grid, name, ComponentType.Pump, anchor, portFlow, outputPressure);
+            var pump = component.gameObject.AddComponent<PumpComponent>();
+
+            var outputField = typeof(PumpComponent).GetField("outputPressure", BindingFlags.NonPublic | BindingFlags.Instance);
+            outputField?.SetValue(pump, outputPressure);
+
+            var boostField = typeof(PumpComponent).GetField("pressureBoost", BindingFlags.NonPublic | BindingFlags.Instance);
+            boostField?.SetValue(pump, pressureBoost);
+
+            var requiresPowerField = typeof(PumpComponent).GetField("requiresPower", BindingFlags.NonPublic | BindingFlags.Instance);
+            requiresPowerField?.SetValue(pump, requiresPower);
+
+            return component;
+        }
+
         private PlacedPipe CreatePipe(
             MachineComponent start,
             MachineComponent end,
@@ -392,6 +508,16 @@ namespace MachineRepair.Tests
         {
             var field = typeof(SimulationManager).GetField("pressureDropPerCell", BindingFlags.NonPublic | BindingFlags.Instance);
             field?.SetValue(sim, drop);
+        }
+
+        private void MarkPowered(SimulationManager sim, MachineComponent component)
+        {
+            var poweredSet = typeof(SimulationManager)
+                .GetField("poweredComponents", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(sim) as HashSet<MachineComponent>;
+
+            poweredSet?.Add(component);
+            component.SetPowered(true);
         }
 
         private void RunWaterStep(SimulationManager sim)

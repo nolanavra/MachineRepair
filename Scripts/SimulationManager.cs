@@ -827,6 +827,7 @@ namespace MachineRepair
             public WaterPortRef PortRef;
             public float AvailableFlow;
             public int StepsFromSource;
+            public float SourcePressure;
         }
 
         /// <summary>
@@ -880,7 +881,8 @@ namespace MachineRepair
                 {
                     PortRef = portRef,
                     AvailableFlow = sourceFlow,
-                    StepsFromSource = 0
+                    StepsFromSource = 0,
+                    SourcePressure = sourcePressure
                 });
 
                 StampCellFlow(portRef.Cell, sourceFlow, CalculatePressureAfterTravel(sourcePressure, 0), 0);
@@ -896,6 +898,11 @@ namespace MachineRepair
                 float availableFlow = Mathf.Min(frontier.AvailableFlow, Mathf.Max(0f, portRef.Port.flowrateMax));
                 if (availableFlow <= 0f) continue;
 
+                float sourcePressure = ResolveComponentSourcePressure(portRef.Component, frontier.SourcePressure);
+                float currentPressure = CalculatePressureAfterTravel(sourcePressure, frontier.StepsFromSource);
+                float pressureBeforeBoost = currentPressure;
+                int stepsFromSource = frontier.StepsFromSource;
+
                 float componentFill = GetComponentFill(portRef.Component);
                 float remainingComponent = Mathf.Max(0f, 100f - componentFill);
                 if (remainingComponent > 0f)
@@ -903,8 +910,7 @@ namespace MachineRepair
                     float applied = Mathf.Min(availableFlow, remainingComponent);
                     componentFill = Mathf.Min(100f, componentFill + applied);
                     SetComponentFill(portRef.Component, componentFill);
-                    float appliedPressure = CalculatePressureAfterTravel(portRef.Component?.def?.maxPressure ?? 0f, frontier.StepsFromSource);
-                    StampCellFlow(portRef.Cell, applied, appliedPressure, frontier.StepsFromSource);
+                    StampCellFlow(portRef.Cell, applied, pressureBeforeBoost, stepsFromSource);
 
                     if (componentFill < 100f - Mathf.Epsilon)
                     {
@@ -912,17 +918,35 @@ namespace MachineRepair
                     }
                 }
 
-                float availablePressure = CalculatePressureAfterTravel(portRef.Component?.def?.maxPressure ?? 0f, frontier.StepsFromSource);
-                StampCellFlow(portRef.Cell, availableFlow, availablePressure, frontier.StepsFromSource);
+                if (TryGetPumpBoost(portRef.Component, componentFill, pressureBeforeBoost, out float boostedPressure))
+                {
+                    sourcePressure = boostedPressure;
+                    currentPressure = boostedPressure;
+                    stepsFromSource = 0;
+                }
+
+                StampCellFlow(portRef.Cell, availableFlow, currentPressure, stepsFromSource);
                 processedPorts.Add(portRef.Cell);
 
-                bool propagatedToPipe = TryPushFlowIntoPipes(portRef, availableFlow, frontier.StepsFromSource, waterPorts, queue);
+                bool propagatedToPipe = TryPushFlowIntoPipes(
+                    portRef,
+                    availableFlow,
+                    sourcePressure,
+                    stepsFromSource,
+                    waterPorts,
+                    queue);
                 if (!propagatedToPipe)
                 {
                     RecordLeak(portRef.Cell);
                 }
 
-                PropagateInternalConnections(portRef, availableFlow, frontier.StepsFromSource, waterPorts, queue);
+                PropagateInternalConnections(
+                    portRef,
+                    availableFlow,
+                    sourcePressure,
+                    stepsFromSource,
+                    waterPorts,
+                    queue);
             }
 
             NotifyLeakListeners();
@@ -1186,6 +1210,7 @@ namespace MachineRepair
         private bool TryPushFlowIntoPipes(
             WaterPortRef portRef,
             float availableFlow,
+            float sourcePressure,
             int stepsFromSource,
             IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
             Queue<FlowFrontier> queue)
@@ -1213,18 +1238,18 @@ namespace MachineRepair
                 {
                     pipe.fillLevel = Mathf.Min(100f, pipe.fillLevel + applied);
                     pipe.flow = applied;
-                    StampPipeFlow(pipe, applied, orderedCells, stepsFromSource);
+                    StampPipeFlow(pipe, applied, orderedCells, sourcePressure, stepsFromSource);
 
                     if (orderedCells.Count > 1 && ShouldSpawnWaterArrow())
                     {
                         int arrowSteps = stepsFromSource + CalculatePipeTraversalSteps(orderedCells);
-                        AddWaterFlowArrowSegments(pipe, orderedCells, applied, arrowSteps);
+                        AddWaterFlowArrowSegments(pipe, orderedCells, applied, sourcePressure, arrowSteps);
                     }
                 }
 
                 if (pipe.fillLevel >= 100f - Mathf.Epsilon)
                 {
-                    EnqueueOppositePort(pipe, portRef.Cell, orderedCells, permitted, stepsFromSource, waterPorts, queue);
+                    EnqueueOppositePort(pipe, portRef.Cell, orderedCells, permitted, sourcePressure, stepsFromSource, waterPorts, queue);
                 }
             }
 
@@ -1250,6 +1275,7 @@ namespace MachineRepair
         private void PropagateInternalConnections(
             WaterPortRef portRef,
             float availableFlow,
+            float sourcePressure,
             int stepsFromSource,
             IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
             Queue<FlowFrontier> queue)
@@ -1275,12 +1301,14 @@ namespace MachineRepair
                 {
                     PortRef = targetRef,
                     AvailableFlow = flowOut,
-                    StepsFromSource = nextSteps
+                    StepsFromSource = nextSteps,
+                    SourcePressure = sourcePressure
                 });
 
                 if (ShouldSpawnWaterArrow())
                 {
-                    float pressure = CalculatePressureAfterTravel(portRef.Component?.def?.maxPressure ?? 0f, nextSteps);
+                    float targetSourcePressure = ResolveComponentSourcePressure(targetRef.Component, sourcePressure);
+                    float pressure = CalculatePressureAfterTravel(targetSourcePressure, nextSteps);
                     AddWaterFlowArrow(portRef.Cell, targetCell, flowOut, pressure, 1f, 0);
                 }
             }
@@ -1312,11 +1340,12 @@ namespace MachineRepair
             }
         }
 
-        private void StampPipeFlow(PlacedPipe pipe, float flow, IReadOnlyList<Vector2Int> orderedCells, int stepsFromSource)
+        private void StampPipeFlow(PlacedPipe pipe, float flow, IReadOnlyList<Vector2Int> orderedCells, float sourcePressure, int stepsFromSource)
         {
             if (grid == null || pipe == null || orderedCells == null || orderedCells.Count == 0) return;
 
-            float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
+            float pipeMaxPressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
+            float clampedSourcePressure = pipeMaxPressure > 0f ? Mathf.Min(sourcePressure, pipeMaxPressure) : sourcePressure;
             int cumulativeSteps = stepsFromSource;
 
             for (int i = 0; i < orderedCells.Count; i++)
@@ -1330,7 +1359,7 @@ namespace MachineRepair
                 }
 
                 int idx = grid.ToIndex(cell);
-                float droppedPressure = CalculatePressureAfterTravel(pressure, cumulativeSteps);
+                float droppedPressure = CalculatePressureAfterTravel(clampedSourcePressure, cumulativeSteps);
                 flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
                 pressureGraph[idx] = Mathf.Max(pressureGraph[idx], droppedPressure);
 
@@ -1346,6 +1375,7 @@ namespace MachineRepair
             Vector2Int fromCell,
             IReadOnlyList<Vector2Int> orderedCells,
             float availableFlow,
+            float sourcePressure,
             int stepsFromSource,
             IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
             Queue<FlowFrontier> queue)
@@ -1359,12 +1389,13 @@ namespace MachineRepair
                 {
                     PortRef = targetPort,
                     AvailableFlow = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.Port.flowrateMax)),
-                    StepsFromSource = traversalSteps
+                    StepsFromSource = traversalSteps,
+                    SourcePressure = sourcePressure
                 });
 
                 if (ShouldSpawnWaterArrow())
                 {
-                    AddWaterFlowArrowSegments(pipe, orderedCells, availableFlow, traversalSteps);
+                    AddWaterFlowArrowSegments(pipe, orderedCells, availableFlow, sourcePressure, traversalSteps);
                 }
             }
             else
@@ -1478,13 +1509,15 @@ namespace MachineRepair
             return steps;
         }
 
-        private void AddWaterFlowArrowSegments(PlacedPipe pipe, IReadOnlyList<Vector2Int> orderedCells, float flow, int stepsFromSource)
+        private void AddWaterFlowArrowSegments(PlacedPipe pipe, IReadOnlyList<Vector2Int> orderedCells, float flow, float sourcePressure, int stepsFromSource)
         {
             if (grid == null || pipe == null || orderedCells == null || orderedCells.Count < 2) return;
 
             EnsurePipeFlowrate(pipe);
 
-            float pressure = CalculatePressureAfterTravel(pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure, stepsFromSource);
+            float pipeMax = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
+            float clampedSource = pipeMax > 0f ? Mathf.Min(sourcePressure, pipeMax) : sourcePressure;
+            float pressure = CalculatePressureAfterTravel(clampedSource, stepsFromSource);
             float normalizedSpeed = pipe.flowrateMax > 0f ? Mathf.Clamp(flow / pipe.flowrateMax, 0f, 1f) : 0f;
             float pathLength = 0f;
 
@@ -1560,6 +1593,46 @@ namespace MachineRepair
         private void ResetWaterArrowTimer()
         {
             waterArrowSpawnTimer = Mathf.Max(waterArrowSpawnIntervalSeconds, 0f);
+        }
+
+        private float ResolveComponentSourcePressure(MachineComponent component, float sourcePressure)
+        {
+            float componentMaxPressure = component?.def?.maxPressure ?? 0f;
+            if (componentMaxPressure > 0f)
+            {
+                return Mathf.Min(sourcePressure, componentMaxPressure);
+            }
+
+            return sourcePressure;
+        }
+
+        private bool TryGetPumpBoost(MachineComponent component, float fillLevel, float incomingPressure, out float boostedPressure)
+        {
+            boostedPressure = incomingPressure;
+            if (component == null || component.def == null || component.def.componentType != ComponentType.Pump)
+            {
+                return false;
+            }
+
+            if (fillLevel < 100f - Mathf.Epsilon)
+            {
+                return false;
+            }
+
+            var pump = component.GetComponent<PumpComponent>();
+            if (pump == null)
+            {
+                return false;
+            }
+
+            bool powered = !pump.RequiresPower || poweredComponents.Contains(component);
+            if (!powered)
+            {
+                return false;
+            }
+
+            boostedPressure = Mathf.Max(incomingPressure, pump.GetOutputPressure(incomingPressure));
+            return boostedPressure > incomingPressure + 0.0001f;
         }
 
         private float CalculatePressureAfterTravel(float sourcePressure, int stepsTraveled)
