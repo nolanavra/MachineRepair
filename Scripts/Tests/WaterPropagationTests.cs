@@ -191,19 +191,16 @@ namespace MachineRepair.Tests
             var pressureGraph = GetPressureGraph(sim);
             Assert.IsNotNull(pressureGraph);
 
-            int penultimateIndex = grid.ToIndex(pipe.occupiedCells[^2]);
-            int sinkIndex = grid.ToIndex(sink.anchorCell);
+            for (int i = 0; i < pipe.occupiedCells.Count; i++)
+            {
+                var cell = pipe.occupiedCells[i];
+                int idx = grid.ToIndex(cell);
+                int stepsToCell = CalculatePathSteps(pipe.occupiedCells, i);
+                float expectedPressure = Mathf.Max(0f, maxPressure - 0.5f * stepsToCell);
 
-            int stepsToPenultimate = CalculatePathSteps(pipe.occupiedCells, pipe.occupiedCells.Count - 2);
-            int stepsToSink = CalculatePathSteps(pipe.occupiedCells, pipe.occupiedCells.Count - 1);
-
-            float expectedPenultimate = Mathf.Max(0f, maxPressure - 0.5f * stepsToPenultimate);
-            float expectedSink = Mathf.Max(0f, maxPressure - 0.5f * stepsToSink);
-
-            Assert.That(pressureGraph[penultimateIndex], Is.EqualTo(expectedPenultimate).Within(0.001f),
-                "Pressure should decline according to distance traveled along the pipe.");
-            Assert.That(pressureGraph[sinkIndex], Is.EqualTo(expectedSink).Within(0.001f),
-                "Downstream port pressure should reflect the full traversal distance.");
+                Assert.That(pressureGraph[idx], Is.EqualTo(expectedPressure).Within(0.001f),
+                    $"Pressure should drop per cell traveled. Cell {cell} expected {expectedPressure:0.###} after {stepsToCell} steps.");
+            }
         }
 
         [Test]
