@@ -33,7 +33,7 @@ namespace MachineRepair.Tests
             var grid = CreateTestGrid();
 
             var source = CreateWaterComponent(grid, new Vector2Int(0, 0), maxPressure: 200_000f);
-            var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f);
+            var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
 
             _ = CreatePipeRun(grid, source, sink, new List<Vector2Int>
             {
@@ -58,6 +58,15 @@ namespace MachineRepair.Tests
             Assert.That(Mathf.Abs(sourceState.Flow_m3s), Is.GreaterThan(1e-6f), "Source flow should be non-zero.");
             Assert.That(Mathf.Abs(sinkState.Flow_m3s), Is.GreaterThan(1e-6f), "Sink flow should be non-zero.");
             Assert.That(sourceState.Pressure_Pa, Is.GreaterThan(sinkState.Pressure_Pa), "Pressure should drop across the pipe run.");
+            Assert.IsTrue(sourceState.IsSource, "Chassis connections should be flagged as sources.");
+            Assert.IsFalse(sinkState.IsSource, "Non-chassis connections should not be sources.");
+            Assert.That(sinkState.Pressure_Pa, Is.GreaterThan(0f), "Sink nodes should receive propagated pressure.");
+            Assert.That(system.SourceByCell[sourceCell], Is.True);
+            Assert.That(system.SourceByCell[sinkCell], Is.False);
+
+            Vector2Int pipeCell = new Vector2Int(1, 0);
+            Assert.That(system.PipeDeltaPByCell.ContainsKey(pipeCell), "Pipe ΔP should be recorded for occupied cells.");
+            Assert.That(system.PipeDeltaPByCell[pipeCell], Is.GreaterThan(0f));
 
             var simulationManagerObject = new GameObject("SimulationManager");
             createdObjects.Add(simulationManagerObject);
@@ -72,6 +81,13 @@ namespace MachineRepair.Tests
             Assert.That(snapshot.ContainsKey(sinkCell), "Snapshot should contain the sink port.");
             Assert.That(Mathf.Abs(snapshot[sourceCell].Flow_m3s), Is.GreaterThan(1e-6f));
             Assert.That(Mathf.Abs(snapshot[sinkCell].Flow_m3s), Is.GreaterThan(1e-6f));
+            Assert.That(snapshot[sourceCell].IsSource, Is.True, "Snapshot should preserve source flags.");
+            Assert.That(snapshot[sinkCell].IsSource, Is.False);
+
+            var snapshotValue = simulationManager.LastSnapshot.Value;
+            Assert.That(snapshotValue.HydraulicSources.ContainsKey(sourceCell) && snapshotValue.HydraulicSources[sourceCell]);
+            Assert.That(snapshotValue.HydraulicSources.ContainsKey(sinkCell) && !snapshotValue.HydraulicSources[sinkCell]);
+            Assert.That(snapshotValue.TryGetPipeDeltaP(pipeCell, out var snapshotDeltaP) && snapshotDeltaP > 0f, "Snapshot should surface pipe ΔP values.");
         }
 
         [Test]
@@ -136,7 +152,11 @@ namespace MachineRepair.Tests
             return grid;
         }
 
-        private (MachineComponent component, PortLocal port) CreateWaterComponent(GridManager grid, Vector2Int anchor, float maxPressure)
+        private (MachineComponent component, PortLocal port) CreateWaterComponent(
+            GridManager grid,
+            Vector2Int anchor,
+            float maxPressure,
+            ComponentType componentType = ComponentType.ChassisWaterConnection)
         {
             var go = new GameObject($"WaterComponent_{anchor}");
             createdObjects.Add(go);
@@ -171,7 +191,7 @@ namespace MachineRepair.Tests
 
             var def = ScriptableObject.CreateInstance<ThingDef>();
             createdObjects.Add(def);
-            def.componentType = ComponentType.ChassisWaterConnection;
+            def.componentType = componentType;
             def.water = true;
             def.maxPressure = maxPressure;
             def.footprintMask = footprint;

@@ -15,7 +15,9 @@ namespace MachineRepair.Fluid
         public int Id;
         public Vector2Int Cell;
         public bool IsFixedPressure;
+        public bool IsSource;
         public double FixedPressure_Pa;
+        public double SourcePressure_Pa;
         public double Injection_m3s;
         public double Pressure_Pa;
 
