@@ -83,7 +83,7 @@ namespace MachineRepair.Grid {
                 cellText.text = $"({location.x}, {location.y})  | i={index} Placeability: {cell.placeability}";
                 cellOccupancy.text = $"Contents// Comp:{cell.HasComponent} Wire: {cell.HasWire} Pipe: {cell.HasPipe} ";
 
-                UpdateWaterDebug(index);
+                UpdateWaterDebug(index, location, cell);
 
 
             }
@@ -110,7 +110,7 @@ namespace MachineRepair.Grid {
             // if (oldMode == GameMode.WirePlacement) WireTool.CancelIfIncomplete();
         }
 
-        private void UpdateWaterDebug(int cellIndex)
+        private void UpdateWaterDebug(int cellIndex, Vector2Int cellPosition, cellDef cell)
         {
             if (waterConditions == null)
             {
@@ -134,7 +134,56 @@ namespace MachineRepair.Grid {
             string state = simulationManager.WaterOn ? "ON" : "OFF";
             string runState = simulationManager.SimulationRunning ? "Running" : "Paused";
 
-            waterConditions.text = $"Water: {state} ({runState})\nPressure: {pressure:0.###} | Flow: {flow:0.###}";
+            bool hasWaterPort = TryGetWaterPortCell(cell, cellPosition, out var portCell);
+            float portPressure = pressure;
+            float portFlow = flow;
+            if (hasWaterPort && snapshot.TryGetPortHydraulicState(portCell, out var portState))
+            {
+                portPressure = portState.Pressure_Pa;
+                portFlow = portState.Flow_m3s;
+            }
+
+            string portLine = hasWaterPort
+                ? $"Port Pressure/Flow: {portPressure:0.###} | {portFlow:0.###}"
+                : "Port Pressure/Flow: (no water port)";
+
+            waterConditions.text =
+                $"Water: {state} ({runState})\nCell Pressure/Flow: {pressure:0.###} | {flow:0.###}\n{portLine}";
+        }
+
+        private static bool TryGetWaterPortCell(cellDef cell, Vector2Int hoveredCell, out Vector2Int portCell)
+        {
+            portCell = default;
+
+            var component = cell.component;
+            if (component == null || component.def == null || component.portDef == null || !component.def.water)
+            {
+                return false;
+            }
+
+            var ports = component.portDef.ports;
+            if (ports == null || ports.Length == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < ports.Length; i++)
+            {
+                var port = ports[i];
+                if (port.portType != PortType.Water)
+                {
+                    continue;
+                }
+
+                var globalPortCell = component.GetGlobalCell(port);
+                if (globalPortCell == hoveredCell)
+                {
+                    portCell = globalPortCell;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void SubscribeSimulationEvents()
