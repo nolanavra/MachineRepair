@@ -14,6 +14,7 @@ namespace MachineRepair.Grid
         [Header("Map Size")]
         public int width = 64;
         public int height = 48;
+        public event Action GridTopologyChanged;
 
         [Header("Cells")]
         private CellPlaceability nullCellPlaceability;
@@ -114,6 +115,11 @@ namespace MachineRepair.Grid
 
         private Dictionary<ThingDef, GameObject> componentPrefabByDef;
         private Dictionary<string, GameObject> componentPrefabByName;
+
+        private void RaiseGridTopologyChanged()
+        {
+            GridTopologyChanged?.Invoke();
+        }
 
         private void EnsureComponentPrefabMappings()
         {
@@ -311,6 +317,7 @@ namespace MachineRepair.Grid
                 {
                     ApplyPortMarkers(component);
                     ApplyDisplaySprites(component, footprintCells.DisplayCells, def.footprintMask, gridCell, 0);
+                    RaiseGridTopologyChanged();
                 }
             }
         }
@@ -803,6 +810,7 @@ namespace MachineRepair.Grid
                 currentPlacementDef.footprintMask,
                 anchorCell,
                 currentPlacementRotation);
+            RaiseGridTopologyChanged();
             SetPlacementHighlightsActive(false);
             ClearPlacementState(false);
             GameModeManager.Instance?.SetMode(GameMode.Selection);
@@ -1239,6 +1247,7 @@ namespace MachineRepair.Grid
             occupancy.component = null;
             occupancyByIndex[i] = occupancy;
             ResetCellPlaceability(i);
+            RaiseGridTopologyChanged();
             return true;
         }
 
@@ -1285,6 +1294,7 @@ namespace MachineRepair.Grid
                 Destroy(component.gameObject);
             else
                 DestroyImmediate(component.gameObject);
+            RaiseGridTopologyChanged();
 
             return true;
         }
@@ -1454,6 +1464,11 @@ namespace MachineRepair.Grid
                 placedAny = true;
             }
 
+            if (placedAny)
+            {
+                RaiseGridTopologyChanged();
+            }
+
             return placedAny;
         }
 
@@ -1524,6 +1539,11 @@ namespace MachineRepair.Grid
                 }
             }
 
+            if (clearedAny)
+            {
+                RaiseGridTopologyChanged();
+            }
+
             return clearedAny;
         }
 
@@ -1534,6 +1554,7 @@ namespace MachineRepair.Grid
             var occupancy = occupancyByIndex[i];
             occupancy.Clear();
             occupancyByIndex[i] = occupancy;
+            RaiseGridTopologyChanged();
             return true;
         }
 

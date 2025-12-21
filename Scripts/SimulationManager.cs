@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using MachineRepair.Grid;
+using MachineRepair.Fluid;
 
 namespace MachineRepair
 {
@@ -24,28 +25,21 @@ namespace MachineRepair
         [SerializeField] private bool powerOn = true;
         [Tooltip("Toggle hydraulic propagation on/off.")]
         [SerializeField] private bool waterOn = true;
-        [Tooltip("Pressure lost per grid cell traveled by water flow.")]
-        [SerializeField] private float pressureDropPerCell = 0.1f;
         [Tooltip("Whether the simulation loop is currently advancing.")]
         [SerializeField] private bool simulationRunning;
-        [Header("Visualization")]
-        [Tooltip("Seconds between spawning water flow arrows. Set to 0 to spawn every time flow advances.")]
-        [SerializeField] private float waterArrowSpawnIntervalSeconds = 0.15f;
-        [Header("Debugging")]
-        [Tooltip("Log water flow arrow instantiation for debugging hydraulic paths.")]
-        [SerializeField] private bool logWaterFlowPaths = false;
 
         private float stepTimer;
-        private float waterArrowSpawnTimer;
         private int simulationStepCount;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
         private float[] pressureGraph;
         private float[] flowGraph;
         private bool[] signalGraph;
-        private int[] waterArrowSteps;
 
         private readonly List<LeakInfo> detectedLeaks = new();
+        private HydraulicSystem hydraulicSystem;
+        private HydraulicSolveResult hydraulicSolveResult;
+        private readonly Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState> hydraulicPortStates = new();
 
         private readonly List<string> faultLog = new();
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
@@ -59,22 +53,7 @@ namespace MachineRepair
         private readonly Dictionary<PlacedWire, float> wireVoltage = new();
         private readonly Dictionary<PlacedWire, float> wireCurrent = new();
         private readonly Dictionary<Vector2Int, PortElectricalState> portElectricalState = new();
-        private readonly Dictionary<MachineComponent, float> componentFillLevels = new();
         private readonly List<List<Vector2Int>> poweredLoops = new();
-
-        private static readonly Vector2Int[] WaterPropagationOffsets =
-        {
-            new Vector2Int(1, 0),
-            new Vector2Int(-1, 0),
-            new Vector2Int(0, 1),
-            new Vector2Int(0, -1),
-            new Vector2Int(1, 1),
-            new Vector2Int(-1, 1),
-            new Vector2Int(1, -1),
-            new Vector2Int(-1, -1)
-        };
-
-        private const float PressureComparisonEpsilon = 0.001f;
 
         public SimulationSnapshot? LastSnapshot { get; private set; }
 
@@ -83,6 +62,9 @@ namespace MachineRepair
         public bool SimulationRunning => simulationRunning;
         public int SimulationStepCount => simulationStepCount;
         public IReadOnlyCollection<MachineComponent> ComponentsMissingReturn => componentsMissingReturn;
+        public HydraulicSolveResult LastHydraulicSolveResult => hydraulicSolveResult;
+        public HydraulicSystem HydraulicSystem => hydraulicSystem;
+        public GridManager Grid => grid;
 
         public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
         {
@@ -114,16 +96,16 @@ namespace MachineRepair
         {
             if (grid == null) grid = FindFirstObjectByType<GridManager>();
 
-            ResetWaterArrowTimer();
+            if (grid != null && hydraulicSystem == null)
+            {
+                hydraulicSystem = new HydraulicSystem(grid);
+            }
+
+            hydraulicSystem?.SetWaterEnabled(waterOn);
         }
 
         private void Update()
         {
-            if (waterOn)
-            {
-                waterArrowSpawnTimer += Time.deltaTime;
-            }
-
             if (!autorun) return;
             if (!simulationRunning)
             {
@@ -156,7 +138,7 @@ namespace MachineRepair
 
             BuildGraphs();
             PropagateVoltageCurrent();
-            PropagatePressureFlow();
+            SimulateHydraulics();
             EvaluateSignalStates();
             UpdateComponentBehaviors();
             DetectFaults();
@@ -169,7 +151,6 @@ namespace MachineRepair
 
             simulationRunning = shouldRun;
             stepTimer = 0f;
-            ResetWaterArrowTimer();
             SimulationRunStateChanged?.Invoke(simulationRunning);
         }
 
@@ -202,7 +183,7 @@ namespace MachineRepair
 
             waterOn = enabled;
             stepTimer = 0f;
-            ResetWaterArrowTimer();
+            hydraulicSystem?.SetWaterEnabled(waterOn);
             WaterToggled?.Invoke(waterOn);
 
             ClearWaterFlowArrows();
@@ -216,7 +197,6 @@ namespace MachineRepair
             EnsureGraph(ref pressureGraph, cellCount);
             EnsureGraph(ref flowGraph, cellCount);
             EnsureGraph(ref signalGraph, cellCount);
-            EnsureGraph(ref waterArrowSteps, cellCount, -1);
 
             faultLog.Clear();
             componentsMissingReturn.Clear();
@@ -816,134 +796,74 @@ namespace MachineRepair
             public float Current;
         }
 
-        private struct WaterPortRef
-        {
-            public Vector2Int Cell;
-            public MachineComponent Component;
-            public int PortIndex;
-            public PortLocal Port;
-        }
-
-        private struct FlowFrontier
-        {
-            public WaterPortRef PortRef;
-            public float AvailableFlow;
-            public int StepsFromSource;
-        }
-
-        /// <summary>
-        /// Propagates hydraulic flow starting at chassis water ports. Each port pushes its
-        /// flowrate into connected pipes/components, filling them toward 100% before
-        /// forwarding along internal port connections (pipe endpoints are treated as
-        /// intra-component links once full). This maintains a deterministic, stepwise fill
-        /// progression the UI can visualize.
-        /// </summary>
-        private void PropagatePressureFlow()
+        private void SimulateHydraulics()
         {
             detectedLeaks.Clear();
             waterFlowArrows.Clear();
 
-            if (grid == null || pressureGraph == null || flowGraph == null)
+            if (hydraulicSystem == null && grid != null)
+            {
+                hydraulicSystem = new HydraulicSystem(grid);
+            }
+
+            if (hydraulicSystem == null || grid == null)
             {
                 NotifyLeakListeners();
                 NotifyWaterFlowListeners();
                 return;
             }
 
-            if (!waterOn)
+            hydraulicSystem.SetWaterEnabled(waterOn);
+            hydraulicSolveResult = hydraulicSystem.Solve();
+
+            CopyHydraulicField(hydraulicSystem.PressureField, ref pressureGraph);
+            CopyHydraulicField(hydraulicSystem.FlowField, ref flowGraph);
+            hydraulicPortStates.Clear();
+            foreach (var kvp in hydraulicSystem.PortStates)
             {
-                NotifyLeakListeners();
-                NotifyWaterFlowListeners();
-                return;
+                hydraulicPortStates[kvp.Key] = kvp.Value;
             }
 
-            System.Array.Clear(pressureGraph, 0, pressureGraph.Length);
-            System.Array.Clear(flowGraph, 0, flowGraph.Length);
-            System.Array.Fill(waterArrowSteps, -1);
-
-            CleanupComponentFillLevels();
-
-            var portPressures = new Dictionary<Vector2Int, float>();
-
-            var waterPorts = new Dictionary<Vector2Int, WaterPortRef>();
-            CollectWaterPorts(waterPorts);
-
-            var processedPorts = new HashSet<Vector2Int>();
-            var queue = new Queue<FlowFrontier>();
-
-            foreach (var kvp in waterPorts)
+            if (hydraulicSystem.FlowArrows != null)
             {
-                var portRef = kvp.Value;
-                if (portRef.Component?.def == null) continue;
-                if (portRef.Component.def.componentType != ComponentType.ChassisWaterConnection) continue;
-
-                SetComponentFill(portRef.Component, 100f);
-                float sourceFlow = Mathf.Max(0f, portRef.Port.flowrateMax);
-                float sourcePressure = portRef.Component.def.maxPressure;
-                float portPressure = CalculatePressureAfterTravel(sourcePressure, 0);
-                queue.Enqueue(new FlowFrontier
+                waterFlowArrows.Clear();
+                for (int i = 0; i < hydraulicSystem.FlowArrows.Count; i++)
                 {
-                    PortRef = portRef,
-                    AvailableFlow = sourceFlow,
-                    StepsFromSource = 0
-                });
-
-                TrackPortPressure(portPressures, portRef.Cell, portPressure);
-                StampCellFlow(portRef.Cell, sourceFlow, portPressure, 0);
-            }
-
-            while (queue.Count > 0)
-            {
-                var frontier = queue.Dequeue();
-
-                if (!waterPorts.TryGetValue(frontier.PortRef.Cell, out var portRef)) continue;
-                if (processedPorts.Contains(portRef.Cell)) continue;
-
-                float availableFlow = Mathf.Min(frontier.AvailableFlow, Mathf.Max(0f, portRef.Port.flowrateMax));
-                if (availableFlow <= 0f) continue;
-
-                float currentPressure = ResolveFrontierPressure(portRef, portPressures, frontier.StepsFromSource);
-                TrackPortPressure(portPressures, portRef.Cell, currentPressure);
-
-                float componentFill = GetComponentFill(portRef.Component);
-                float remainingComponent = Mathf.Max(0f, 100f - componentFill);
-                if (remainingComponent > 0f)
-                {
-                    float applied = Mathf.Min(availableFlow, remainingComponent);
-                    componentFill = Mathf.Min(100f, componentFill + applied);
-                    SetComponentFill(portRef.Component, componentFill);
-                    StampCellFlow(portRef.Cell, applied, currentPressure, frontier.StepsFromSource);
-
-                    if (componentFill < 100f - Mathf.Epsilon)
-                    {
-                        continue;
-                    }
+                    waterFlowArrows.Add(hydraulicSystem.FlowArrows[i]);
                 }
-
-                float propagatedPressure = currentPressure;
-                int propagatedSteps = frontier.StepsFromSource;
-
-                if (TryComputePumpPressure(portRef.Component, currentPressure, out var boostedPressure))
-                {
-                    propagatedPressure = boostedPressure;
-                    propagatedSteps = 0;
-                    TrackPortPressure(portPressures, portRef.Cell, propagatedPressure);
-                }
-
-                StampCellFlow(portRef.Cell, availableFlow, propagatedPressure, propagatedSteps);
-                processedPorts.Add(portRef.Cell);
-
-                bool propagatedToPipe = TryPushFlowIntoPipes(portRef, availableFlow, propagatedSteps, propagatedPressure, waterPorts, portPressures, queue);
-                if (!propagatedToPipe)
-                {
-                    RecordLeak(portRef.Cell);
-                }
-
-                PropagateInternalConnections(portRef, availableFlow, propagatedSteps, propagatedPressure, waterPorts, portPressures, queue);
             }
 
             NotifyLeakListeners();
             NotifyWaterFlowListeners();
+        }
+
+        private void CopyHydraulicField(float[] source, ref float[] destination)
+        {
+            if (source == null || source.Length == 0)
+            {
+                if (grid != null)
+                {
+                    EnsureGraph(ref destination, grid.CellCount);
+                }
+                else
+                {
+                    destination = Array.Empty<float>();
+                }
+
+                if (destination != null)
+                {
+                    System.Array.Clear(destination, 0, destination.Length);
+                }
+
+                return;
+            }
+
+            if (destination == null || destination.Length != source.Length)
+            {
+                destination = new float[source.Length];
+            }
+
+            Array.Copy(source, destination, source.Length);
         }
 
         private void EvaluateSignalStates()
@@ -1050,7 +970,8 @@ namespace MachineRepair
                 Signals = (bool[])signalGraph.Clone(),
                 Faults = new List<string>(faultLog),
                 PowerLoops = CloneLoops(poweredLoops),
-                PortElectrical = new Dictionary<Vector2Int, PortElectricalState>(portElectricalState)
+                PortElectrical = new Dictionary<Vector2Int, PortElectricalState>(portElectricalState),
+                PortHydraulic = new Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState>(hydraulicPortStates)
             };
 
             SimulationStepCompleted?.Invoke();
@@ -1136,660 +1057,6 @@ namespace MachineRepair
             return copy;
         }
 
-        private void CollectWaterPorts(Dictionary<Vector2Int, WaterPortRef> waterPorts)
-        {
-            waterPorts.Clear();
-
-            for (int y = 0; y < grid.height; y++)
-            {
-                for (int x = 0; x < grid.width; x++)
-                {
-                    var cell = grid.GetCell(new Vector2Int(x, y));
-                    if (cell.component == null || cell.component.portDef == null || cell.component.portDef.ports == null) continue;
-
-                    for (int i = 0; i < cell.component.portDef.ports.Length; i++)
-                    {
-                        var port = cell.component.portDef.ports[i];
-                        if (port.portType != PortType.Water) continue;
-
-                        Vector2Int global = cell.component.GetGlobalCell(port);
-                        if (grid.InBounds(global.x, global.y))
-                        {
-                            waterPorts[global] = new WaterPortRef
-                            {
-                                Cell = global,
-                                Component = cell.component,
-                                PortIndex = i,
-                                Port = port
-                            };
-                        }
-                    }
-                }
-            }
-        }
-
-        private float ResolveFrontierPressure(WaterPortRef portRef, Dictionary<Vector2Int, float> portPressures, int stepsFromSource)
-        {
-            float recorded = GetPortPressure(portPressures, portRef.Cell);
-            if (!float.IsNegativeInfinity(recorded))
-            {
-                return recorded;
-            }
-
-            float sourcePressure = portRef.Component?.def?.maxPressure ?? 0f;
-            return CalculatePressureAfterTravel(sourcePressure, stepsFromSource);
-        }
-
-        private bool TryComputePumpPressure(MachineComponent component, float incomingPressure, out float boostedPressure)
-        {
-            boostedPressure = incomingPressure;
-
-            if (component == null || component.def == null || component.def.componentType != ComponentType.Pump)
-            {
-                return false;
-            }
-
-            var pump = component.GetComponent<PumpComponent>();
-            if (pump == null)
-            {
-                return false;
-            }
-
-            if (GetComponentFill(component) < 100f - Mathf.Epsilon)
-            {
-                return false;
-            }
-
-            if (pump.RequiresPower && !poweredComponents.Contains(component))
-            {
-                return false;
-            }
-
-            float candidate = pump.GetOutputPressure(incomingPressure);
-            if (!IsHigherPressure(candidate, incomingPressure))
-            {
-                return false;
-            }
-
-            boostedPressure = candidate;
-            return true;
-        }
-
-        private void CleanupComponentFillLevels()
-        {
-            var toRemove = new List<MachineComponent>();
-            foreach (var kvp in componentFillLevels)
-            {
-                if (kvp.Key == null)
-                {
-                    toRemove.Add(kvp.Key);
-                }
-            }
-
-            foreach (var component in toRemove)
-            {
-                componentFillLevels.Remove(component);
-            }
-        }
-
-        private float GetComponentFill(MachineComponent component)
-        {
-            if (component == null) return 0f;
-            return componentFillLevels.TryGetValue(component, out var fill)
-                ? Mathf.Clamp(fill, 0f, 100f)
-                : 0f;
-        }
-
-        private void SetComponentFill(MachineComponent component, float value)
-        {
-            if (component == null) return;
-
-            componentFillLevels[component] = Mathf.Clamp(value, 0f, 100f);
-        }
-
-        private bool TryPushFlowIntoPipes(
-            WaterPortRef portRef,
-            float availableFlow,
-            int stepsFromSource,
-            float sourcePressure,
-            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
-            Dictionary<Vector2Int, float> portPressures,
-            Queue<FlowFrontier> queue)
-        {
-            if (grid == null) return false;
-
-            var cell = grid.GetCell(portRef.Cell);
-            if (!cell.HasPipe) return false;
-
-            bool propagated = false;
-            foreach (var pipe in cell.Pipes)
-            {
-                if (pipe == null) continue;
-
-                propagated = true;
-                EnsurePipeFlowrate(pipe);
-                var orderedCells = GetOrderedPipeCells(pipe, portRef.Cell);
-                if (orderedCells.Count == 0) continue;
-
-                int traversalSteps = CalculatePipeTraversalSteps(orderedCells);
-                Vector2Int farCell = portRef.Cell == pipe.startPortCell ? pipe.endPortCell : pipe.startPortCell;
-                float knownTargetPressure = GetPortPressure(portPressures, farCell);
-                float projectedEndPressure = CalculatePressureAfterTravel(sourcePressure, traversalSteps);
-                if (IsHigherPressure(knownTargetPressure, projectedEndPressure))
-                {
-                    continue;
-                }
-
-                TrackPipeEndpointPressures(portPressures, portRef.Cell, orderedCells, sourcePressure);
-
-                float pipeRemaining = Mathf.Max(0f, 100f - Mathf.Clamp(pipe.fillLevel, 0f, 100f));
-                float permitted = pipe.flowrateMax > 0f ? Mathf.Min(availableFlow, pipe.flowrateMax) : availableFlow;
-                float applied = Mathf.Min(permitted, pipeRemaining);
-
-                float exitPressure = projectedEndPressure;
-
-                if (applied > 0f)
-                {
-                    pipe.fillLevel = Mathf.Min(100f, pipe.fillLevel + applied);
-                    pipe.flow = applied;
-                    exitPressure = StampPipeFlow(pipe, applied, orderedCells, stepsFromSource, sourcePressure);
-
-                    if (orderedCells.Count > 1 && ShouldSpawnWaterArrow())
-                    {
-                        int arrowSteps = stepsFromSource + traversalSteps;
-                        float endPressure = CalculatePressureAfterTravel(sourcePressure, traversalSteps);
-                        float existingTarget = GetPortPressure(portPressures, farCell);
-                        if (!float.IsNegativeInfinity(existingTarget))
-                        {
-                            endPressure = Mathf.Max(endPressure, existingTarget);
-                        }
-                        AddWaterFlowArrowSegments(pipe, orderedCells, applied, arrowSteps, sourcePressure, endPressure);
-                    }
-                }
-
-                if (pipe.fillLevel >= 100f - Mathf.Epsilon)
-                {
-                    EnqueueOppositePort(
-                        pipe,
-                        portRef.Cell,
-                        orderedCells,
-                        permitted,
-                        stepsFromSource,
-                        sourcePressure,
-                        exitPressure,
-                        traversalSteps,
-                        waterPorts,
-                        portPressures,
-                        queue);
-                }
-            }
-
-            return propagated;
-        }
-
-        private void RecordLeak(Vector2Int cell)
-        {
-            if (grid == null || !grid.InBounds(cell.x, cell.y)) return;
-
-            for (int i = 0; i < detectedLeaks.Count; i++)
-            {
-                if (detectedLeaks[i].Cell == cell) return;
-            }
-
-            detectedLeaks.Add(new LeakInfo
-            {
-                Cell = cell,
-                WorldPosition = grid.CellToWorld(cell)
-            });
-        }
-
-        private void PropagateInternalConnections(
-            WaterPortRef portRef,
-            float availableFlow,
-            int stepsFromSource,
-            float sourcePressure,
-            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
-            Dictionary<Vector2Int, float> portPressures,
-            Queue<FlowFrontier> queue)
-        {
-            var ports = portRef.Component?.portDef?.ports;
-            if (ports == null) return;
-
-            var connections = portRef.Port.internalConnectionIndices;
-            if (connections == null) return;
-
-            foreach (var targetIndex in connections)
-            {
-                if (targetIndex < 0 || targetIndex >= ports.Length) continue;
-
-                var targetPort = ports[targetIndex];
-                Vector2Int targetCell = portRef.Component.GetGlobalCell(targetPort);
-                if (!grid.InBounds(targetCell.x, targetCell.y)) continue;
-                if (!waterPorts.TryGetValue(targetCell, out var targetRef)) continue;
-
-                float flowOut = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.flowrateMax));
-                int nextSteps = stepsFromSource + 1;
-                float targetPressure = CalculatePressureAfterTravel(sourcePressure, 1);
-                float existingPressure = GetPortPressure(portPressures, targetCell);
-                if (!IsHigherPressure(sourcePressure, existingPressure))
-                {
-                    continue;
-                }
-
-                TrackPortPressure(portPressures, targetCell, targetPressure);
-                queue.Enqueue(new FlowFrontier
-                {
-                    PortRef = targetRef,
-                    AvailableFlow = flowOut,
-                    StepsFromSource = nextSteps
-                });
-
-                if (ShouldSpawnWaterArrow())
-                {
-                    AddWaterFlowArrow(portRef.Cell, targetCell, flowOut, sourcePressure, targetPressure, 1f, 0);
-                }
-            }
-        }
-
-        private static void EnsurePipeFlowrate(PlacedPipe pipe)
-        {
-            if (pipe == null) return;
-
-            if (pipe.flowrateMax <= 0f && pipe.pipeDef != null)
-            {
-                pipe.flowrateMax = Mathf.Max(0f, pipe.pipeDef.maxFlow);
-            }
-
-            pipe.fillLevel = Mathf.Clamp(pipe.fillLevel, 0f, 100f);
-        }
-
-        private void StampCellFlow(Vector2Int cell, float flow, float pressure, int stepsFromSource)
-        {
-            if (grid == null || !grid.InBounds(cell.x, cell.y)) return;
-
-            int idx = grid.ToIndex(cell);
-            flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
-            pressureGraph[idx] = Mathf.Max(pressureGraph[idx], pressure);
-
-            if (waterArrowSteps[idx] == -1 || stepsFromSource < waterArrowSteps[idx])
-            {
-                waterArrowSteps[idx] = stepsFromSource;
-            }
-        }
-
-        private static void TrackPortPressure(Dictionary<Vector2Int, float> portPressures, Vector2Int cell, float pressure)
-        {
-            if (portPressures == null) return;
-
-            if (!portPressures.TryGetValue(cell, out var existing) || pressure > existing)
-            {
-                portPressures[cell] = pressure;
-            }
-        }
-
-        private static float GetPortPressure(Dictionary<Vector2Int, float> portPressures, Vector2Int cell)
-        {
-            if (portPressures != null && portPressures.TryGetValue(cell, out var existing))
-            {
-                return existing;
-            }
-
-            return float.NegativeInfinity;
-        }
-
-        private static bool IsHigherPressure(float source, float target)
-        {
-            return source > target + PressureComparisonEpsilon;
-        }
-
-        private static bool ArePressuresEqual(float a, float b)
-        {
-            return Mathf.Abs(a - b) <= PressureComparisonEpsilon;
-        }
-
-        private void TrackPipeEndpointPressures(
-            Dictionary<Vector2Int, float> portPressures,
-            Vector2Int originCell,
-            IReadOnlyList<Vector2Int> orderedCells,
-            float sourcePressure)
-        {
-            if (grid == null || portPressures == null || orderedCells == null || orderedCells.Count == 0) return;
-
-            int traversalSteps = CalculatePipeTraversalSteps(orderedCells);
-            float originPressure = CalculatePressureAfterTravel(sourcePressure, 0);
-            TrackPortPressure(portPressures, originCell, originPressure);
-
-            Vector2Int farEnd = orderedCells[^1];
-            float farPressure = CalculatePressureAfterTravel(sourcePressure, traversalSteps);
-            TrackPortPressure(portPressures, farEnd, farPressure);
-        }
-
-        private float StampPipeFlow(PlacedPipe pipe, float flow, IReadOnlyList<Vector2Int> orderedCells, int stepsFromSource, float sourcePressure)
-        {
-            if (grid == null || pipe == null || orderedCells == null || orderedCells.Count == 0) return sourcePressure;
-
-            float pressure = pipe.pipeDef != null ? pipe.pipeDef.maxPressure : pipe.pressure;
-            pressure = Mathf.Min(pressure, sourcePressure);
-            int cumulativeSteps = stepsFromSource;
-            float lastPressure = pressure;
-
-            for (int i = 0; i < orderedCells.Count; i++)
-            {
-                var cell = orderedCells[i];
-                if (!grid.InBounds(cell.x, cell.y)) continue;
-
-                if (i > 0)
-                {
-                    cumulativeSteps += GetStepDistance(orderedCells[i - 1], cell);
-                }
-
-                int idx = grid.ToIndex(cell);
-                float droppedPressure = CalculatePressureAfterTravel(pressure, cumulativeSteps);
-                lastPressure = droppedPressure;
-                flowGraph[idx] = Mathf.Max(flowGraph[idx], flow);
-                pressureGraph[idx] = Mathf.Max(pressureGraph[idx], droppedPressure);
-
-                if (waterArrowSteps[idx] == -1 || cumulativeSteps < waterArrowSteps[idx])
-                {
-                    waterArrowSteps[idx] = cumulativeSteps;
-                }
-            }
-
-            return lastPressure;
-        }
-
-        private void EnqueueOppositePort(
-            PlacedPipe pipe,
-            Vector2Int fromCell,
-            IReadOnlyList<Vector2Int> orderedCells,
-            float availableFlow,
-            int stepsFromSource,
-            float sourcePressure,
-            float exitPressure,
-            int traversalSteps,
-            IReadOnlyDictionary<Vector2Int, WaterPortRef> waterPorts,
-            Dictionary<Vector2Int, float> portPressures,
-            Queue<FlowFrontier> queue)
-        {
-            Vector2Int targetCell = fromCell == pipe.startPortCell ? pipe.endPortCell : pipe.startPortCell;
-            int totalSteps = stepsFromSource + traversalSteps;
-
-            if (waterPorts.TryGetValue(targetCell, out var targetPort))
-            {
-                float targetPressure = exitPressure;
-                float existingPressure = GetPortPressure(portPressures, targetCell);
-                if (IsHigherPressure(existingPressure, targetPressure))
-                {
-                    return;
-                }
-
-                queue.Enqueue(new FlowFrontier
-                {
-                    PortRef = targetPort,
-                    AvailableFlow = Mathf.Min(availableFlow, Mathf.Max(0f, targetPort.Port.flowrateMax)),
-                    StepsFromSource = totalSteps
-                });
-                TrackPortPressure(portPressures, targetCell, targetPressure);
-
-                if (ShouldSpawnWaterArrow())
-                {
-                    float endPressure = Mathf.Max(targetPressure, existingPressure);
-                    AddWaterFlowArrowSegments(pipe, orderedCells, availableFlow, totalSteps, sourcePressure, endPressure);
-                }
-            }
-            else
-            {
-                RecordLeak(targetCell);
-            }
-        }
-
-        private void AddWaterFlowArrow(
-            Vector2Int startCell,
-            Vector2Int endCell,
-            float flow,
-            float startPressure,
-            float endPressure,
-            float scaleMultiplier,
-            float normalizedSpeed)
-        {
-            if (grid == null || startCell == endCell)
-            {
-                return;
-            }
-
-            if (ArePressuresEqual(startPressure, endPressure))
-            {
-                return;
-            }
-
-            bool startHigher = startPressure > endPressure;
-            if (!startHigher)
-            {
-                (startCell, endCell) = (endCell, startCell);
-                (startPressure, endPressure) = (endPressure, startPressure);
-            }
-
-            Vector3 start = grid.CellToWorld(startCell);
-            Vector3 end = grid.CellToWorld(endCell);
-            float pathLength = Vector3.Distance(start, end);
-
-            if (pathLength <= 0.0001f)
-            {
-                return;
-            }
-
-            float scale = Mathf.Max(0.001f, (startPressure / 9f) * Mathf.Max(0.001f, scaleMultiplier));
-            float speed = normalizedSpeed;
-
-            if (speed <= 0f && flow > 0f)
-            {
-                speed = Mathf.Clamp01(flow / Mathf.Max(startPressure, 1f));
-            }
-
-            var arrow = new WaterFlowArrow
-            {
-                StartCell = startCell,
-                EndCell = endCell,
-                Path = new[] { start, end },
-                PathLength = pathLength,
-                TravelDistance = Mathf.Max(0.001f, pathLength),
-                Speed = Mathf.Max(0f, speed),
-                Scale = scale
-            };
-
-            waterFlowArrows.Add(arrow);
-
-            if (logWaterFlowPaths)
-            {
-                Debug.Log(
-                    $"[SimulationManager] Added direct water arrow start={startCell} end={endCell} len={pathLength:0.###} speed={arrow.Speed:0.###} scale={arrow.Scale:0.###}");
-            }
-        }
-
-        private List<Vector2Int> GetOrderedPipeCells(PlacedPipe pipe, Vector2Int originCell)
-        {
-            var orderedCells = new List<Vector2Int>(pipe?.occupiedCells ?? new List<Vector2Int>());
-            if (orderedCells.Count == 0) return orderedCells;
-
-            bool originIsStart = originCell == pipe?.startPortCell;
-            bool originIsEnd = originCell == pipe?.endPortCell;
-
-            if (!originIsStart && !originIsEnd)
-            {
-                if (logWaterFlowPaths)
-                {
-                    Debug.LogWarning($"[SimulationManager] Cannot order pipe cells: origin {originCell} is not part of pipe between {pipe?.startPortCell} and {pipe?.endPortCell}.");
-                }
-
-                orderedCells.Clear();
-                return orderedCells;
-            }
-
-            if (originIsEnd)
-            {
-                orderedCells.Reverse();
-            }
-
-            int originIndex = orderedCells.IndexOf(originCell);
-            if (originIndex > 0)
-            {
-                orderedCells.RemoveRange(0, originIndex);
-            }
-            else if (originIndex < 0)
-            {
-                orderedCells.Clear();
-            }
-
-            if (orderedCells.Count > 0 && orderedCells[0] != originCell && logWaterFlowPaths)
-            {
-                Debug.LogWarning($"[SimulationManager] Pipe occupancy ordering mismatch. Expected origin {originCell} at index 0 but found {orderedCells[0]}.");
-            }
-
-            return orderedCells;
-        }
-
-        private static int CalculatePipeTraversalSteps(IReadOnlyList<Vector2Int> orderedCells)
-        {
-            if (orderedCells == null || orderedCells.Count < 2) return 0;
-
-            int steps = 0;
-            for (int i = 1; i < orderedCells.Count; i++)
-            {
-                steps += GetStepDistance(orderedCells[i - 1], orderedCells[i]);
-            }
-
-            return steps;
-        }
-
-        private void AddWaterFlowArrowSegments(
-            PlacedPipe pipe,
-            IReadOnlyList<Vector2Int> orderedCells,
-            float flow,
-            int stepsFromSource,
-            float startPressure,
-            float endPressure)
-        {
-            if (grid == null || pipe == null || orderedCells == null || orderedCells.Count < 2) return;
-
-            EnsurePipeFlowrate(pipe);
-
-            if (ArePressuresEqual(startPressure, endPressure))
-            {
-                return;
-            }
-
-            bool startHigher = startPressure > endPressure;
-            if (!startHigher)
-            {
-                orderedCells = new List<Vector2Int>(orderedCells);
-                ((List<Vector2Int>)orderedCells).Reverse();
-            }
-
-            float pressure = startHigher ? startPressure : endPressure;
-            float normalizedSpeed = pipe.flowrateMax > 0f ? Mathf.Clamp(flow / pipe.flowrateMax, 0f, 1f) : 0f;
-            float pathLength = 0f;
-
-            var path = new List<Vector3>(orderedCells.Count);
-            for (int i = 0; i < orderedCells.Count; i++)
-            {
-                Vector3 point = grid.CellToWorld(orderedCells[i]);
-                path.Add(point);
-
-                if (i == 0) continue;
-
-                Vector3 prev = path[i - 1];
-                float segmentLength = Vector3.Distance(prev, point);
-                if (Mathf.Abs(segmentLength) < 0.0001f)
-                {
-                    continue;
-                }
-
-                pathLength += segmentLength;
-                if (Mathf.Abs(orderedCells[i - 1].x - orderedCells[i].x) > 1 || Mathf.Abs(orderedCells[i - 1].y - orderedCells[i].y) > 1)
-                {
-                    if (logWaterFlowPaths)
-                    {
-                        Debug.LogWarning($"[SimulationManager] Non-adjacent pipe segment detected between {orderedCells[i - 1]} and {orderedCells[i]} (segment {i - 1}).");
-                    }
-                }
-            }
-
-            if (path.Count < 2 || pathLength <= 0.0001f)
-            {
-                return;
-            }
-
-            float travelDistance = pipe.fillLevel >= 100f - Mathf.Epsilon
-                ? pathLength
-                : pathLength * 0.5f;
-
-            var arrow = new WaterFlowArrow
-            {
-                StartCell = orderedCells[0],
-                EndCell = orderedCells[^1],
-                Path = path.ToArray(),
-                PathLength = pathLength,
-                TravelDistance = Mathf.Max(0.001f, travelDistance),
-                Speed = Mathf.Max(0f, normalizedSpeed),
-                Scale = pressure / 9f
-            };
-
-            waterFlowArrows.Add(arrow);
-
-            if (logWaterFlowPaths)
-            {
-                Debug.Log($"[SimulationManager] Added water arrow path start={arrow.StartCell} end={arrow.EndCell} len={arrow.PathLength:0.###} travel={arrow.TravelDistance:0.###} speed={arrow.Speed:0.###} scale={arrow.Scale:0.###}");
-            }
-        }
-
-        private bool ShouldSpawnWaterArrow()
-        {
-            if (waterArrowSpawnIntervalSeconds <= 0f)
-            {
-                return true;
-            }
-
-            if (waterArrowSpawnTimer >= waterArrowSpawnIntervalSeconds)
-            {
-                waterArrowSpawnTimer = 0f;
-                return true;
-            }
-
-            return false;
-        }
-
-        private void ResetWaterArrowTimer()
-        {
-            waterArrowSpawnTimer = Mathf.Max(waterArrowSpawnIntervalSeconds, 0f);
-        }
-
-        private float CalculatePressureAfterTravel(float sourcePressure, int stepsTraveled)
-        {
-            if (pressureDropPerCell <= 0f) return sourcePressure;
-
-            float dropped = sourcePressure - pressureDropPerCell * Mathf.Max(0, stepsTraveled);
-            return Mathf.Max(0f, dropped);
-        }
-
-        private static int GetStepDistance(Vector2Int origin, Vector2Int destination)
-        {
-            int dx = Mathf.Abs(destination.x - origin.x);
-            int dy = Mathf.Abs(destination.y - origin.y);
-            return Mathf.Max(dx, dy);
-        }
-
-        private bool IsWaterSupplyComponent(cellDef cell)
-        {
-            return cell.component != null
-                && cell.component.def != null
-                && cell.component.def.componentType == ComponentType.ChassisWaterConnection;
-        }
-
-        private static bool IsWaterPortCell(Vector2Int cellPos, HashSet<Vector2Int> waterPorts)
-        {
-            return waterPorts.Contains(cellPos);
-        }
-
         private void NotifyLeakListeners()
         {
             LeaksUpdated?.Invoke(detectedLeaks);
@@ -1830,16 +1097,6 @@ namespace MachineRepair
             }
         }
 
-        private static void EnsureGraph(ref int[] graph, int size, int clearValue)
-        {
-            if (graph == null || graph.Length != size)
-            {
-                graph = new int[size];
-            }
-
-            System.Array.Fill(graph, clearValue);
-        }
-
         public struct SimulationSnapshot
         {
             public int StepIndex;
@@ -1851,12 +1108,25 @@ namespace MachineRepair
             public IReadOnlyList<string> Faults;
             public IReadOnlyList<IReadOnlyList<Vector2Int>> PowerLoops;
             public IReadOnlyDictionary<Vector2Int, PortElectricalState> PortElectrical;
+            public IReadOnlyDictionary<Vector2Int, HydraulicSystem.PortHydraulicState> PortHydraulic;
 
             public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
             {
                 if (PortElectrical != null && PortElectrical.TryGetValue(portCell, out var electrical))
                 {
                     state = electrical;
+                    return true;
+                }
+
+                state = default;
+                return false;
+            }
+
+            public bool TryGetPortHydraulicState(Vector2Int portCell, out HydraulicSystem.PortHydraulicState state)
+            {
+                if (PortHydraulic != null && PortHydraulic.TryGetValue(portCell, out var hydraulic))
+                {
+                    state = hydraulic;
                     return true;
                 }
 
