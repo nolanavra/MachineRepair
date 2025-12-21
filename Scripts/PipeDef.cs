@@ -19,5 +19,13 @@ namespace MachineRepair
         [Header("Semantics")]
         [Min(0f)] public float maxPressure = 10f;
         [Min(0f)] public float maxFlow = 1f;
+
+        [Header("Hydraulics (SI)")]
+        [Min(0.0001f)] public float innerDiameter_m = 0.01f;
+        [Min(0f)] public float roughness_m = 1e-5f;
+        [Tooltip("Minor loss coefficients (K values) summed into the Darcy–Weisbach evaluation.")]
+        public float[] minorLosses = System.Array.Empty<float>();
+        [Min(0f)] public float fluidDensity_kgm3 = 998f;
+        [Min(0f)] public float fluidViscosity_PaS = 1.002e-3f;
     }
 }
