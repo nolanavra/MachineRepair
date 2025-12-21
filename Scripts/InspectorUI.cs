@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using MachineRepair;
+using MachineRepair.Fluid;
 using MachineRepair.Grid;
 using UnityEngine;
 using UnityEngine.UI;
@@ -239,24 +240,22 @@ public class InspectorUI : MonoBehaviour
         var sb = new StringBuilder();
         sb.AppendLine("Simulation Parameters:");
 
+        var component = selection.cellData.component;
+        bool hasSnapshot = simulationManager != null && simulationManager.LastSnapshot.HasValue;
+        SimulationManager.SimulationSnapshot snapshot = hasSnapshot
+            ? simulationManager.LastSnapshot.Value
+            : default;
+
         bool powered = false;
         float flowIn = 0f;
         float pressure = 0f;
 
-        if (grid != null && simulationManager != null && simulationManager.LastSnapshot.HasValue)
+        Vector2Int targetCell = component != null ? component.anchorCell : selection.cell;
+        bool cellValid = grid != null && grid.InBounds(targetCell.x, targetCell.y);
+        int idx = cellValid && grid != null ? grid.ToIndex(targetCell) : -1;
+
+        if (cellValid && hasSnapshot)
         {
-            Vector2Int targetCell = selection.cellData.component != null
-                ? selection.cellData.component.anchorCell
-                : selection.cell;
-
-            if (!grid.InBounds(targetCell.x, targetCell.y))
-            {
-                return "Simulation data unavailable (out of bounds).";
-            }
-
-            int idx = grid.ToIndex(targetCell);
-            var snapshot = simulationManager.LastSnapshot.Value;
-
             if (snapshot.Voltage != null && idx >= 0 && idx < snapshot.Voltage.Length)
             {
                 powered = simulationManager.PowerOn && snapshot.Voltage[idx] > 0.01f;
@@ -272,6 +271,14 @@ public class InspectorUI : MonoBehaviour
                 pressure = simulationManager.WaterOn ? snapshot.Pressure[idx] : 0f;
             }
         }
+        else if (!cellValid)
+        {
+            sb.AppendLine("- Simulation data unavailable (out of bounds).");
+        }
+        else if (!hasSnapshot)
+        {
+            sb.AppendLine("- Simulation snapshot unavailable.");
+        }
 
         sb.AppendLine($"- Powered: {powered}");
         sb.AppendLine($"- Water Flow In: {flowIn:F2}");
@@ -285,7 +292,55 @@ public class InspectorUI : MonoBehaviour
             sb.AppendLine($"- Temperature: {temperature:F1} °C");
         }
 
+        AppendWaterPortHydraulicStates(sb, component, snapshot, hasSnapshot);
+
         return sb.ToString();
+    }
+
+    private static void AppendWaterPortHydraulicStates(
+        StringBuilder sb,
+        MachineComponent component,
+        SimulationManager.SimulationSnapshot snapshot,
+        bool hasSnapshot)
+    {
+        if (component?.portDef?.ports == null || component.portDef.ports.Length == 0)
+        {
+            return;
+        }
+
+        var ports = component.portDef.ports;
+        bool printedHeader = false;
+
+        for (int i = 0; i < ports.Length; i++)
+        {
+            var port = ports[i];
+            if (port.portType != PortType.Water)
+            {
+                continue;
+            }
+
+            if (!printedHeader)
+            {
+                sb.AppendLine("Water Ports:");
+                printedHeader = true;
+            }
+
+            Vector2Int globalPortCell = component.GetGlobalCell(port);
+            string linePrefix = $"- Port {i} @ ({globalPortCell.x},{globalPortCell.y}): ";
+
+            if (hasSnapshot && snapshot.TryGetPortHydraulicState(globalPortCell, out HydraulicSystem.PortHydraulicState state))
+            {
+                sb.AppendLine($"{linePrefix}Pressure {state.Pressure_Pa:0.###} Pa, Flow {state.Flow_m3s:0.###} m³/s");
+            }
+            else if (!hasSnapshot)
+            {
+                sb.AppendLine($"{linePrefix}Hydraulic data unavailable (no snapshot).");
+            }
+            else
+            {
+                sb.AppendLine($"{linePrefix}Hydraulic data unavailable.");
+            }
+        }
     }
 
     private void OnSwitchToggleButtonClicked()
