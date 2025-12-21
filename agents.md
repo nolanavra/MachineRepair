@@ -223,10 +223,20 @@ repository_status_and_gameplay_iteration:
       - Connections typed (power vs signal).
       - Reciprocal component connection lists updated.
       - Forms the electrical/signal graph consumed by simulation.
-    invariants:
-      - Wires may only anchor to explicit ThingDef-derived ports.
-      - Paths may not traverse arbitrary component tiles.
-      - Grid cells track which connection occupies them.
+      invariants:
+        - Wires may only anchor to explicit ThingDef-derived ports.
+        - Paths may not traverse arbitrary component tiles.
+        - Grid cells track which connection occupies them.
+    hydraulic_graph:
+      model:
+        - Pipes now register into an explicit hydraulic graph built from nodes and edges, mirroring the electrical/signal structure.
+        - Nodes are authored port cells (ThingDef water ports) and inline junction components; edges are pipe segments stamped through GridManager.
+        - Each edge records capacity, length (cell count), and friction factor; nodes retain pressure/volume buffers used by simulation.
+      rules:
+        - All new pipe or water-system expansions must attach to this hydraulic graph rather than ad-hoc adjacency checks.
+        - Port compatibility is validated against ThingDef water port definitions before graph registration.
+        - Deletions must remove edges and orphaned nodes, triggering a rebuild of local pressure/flow caches.
+        - Tools rendering previews should read from the graph to avoid desync with simulation.
 
   simulation_hooks_and_integration:
     SimulationManager:
