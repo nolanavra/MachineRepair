@@ -330,7 +330,14 @@ public class InspectorUI : MonoBehaviour
 
             if (hasSnapshot && snapshot.TryGetPortHydraulicState(globalPortCell, out HydraulicSystem.PortHydraulicState state))
             {
-                sb.AppendLine($"{linePrefix}Pressure {state.Pressure_Pa:0.###} Pa, Flow {state.Flow_m3s:0.###} m³/s");
+                bool hasDeltaP = snapshot.TryGetPipeDeltaP(globalPortCell, out var deltaP);
+                string sourceLabel = state.IsSource ? "Source" : "Node";
+                string sourcePressure = state.IsSource && state.SourcePressure_Pa > 0f
+                    ? $" (Set {state.SourcePressure_Pa:0.###} Pa)"
+                    : string.Empty;
+                string deltaLabel = hasDeltaP ? $", ΔP {deltaP:0.###} Pa" : string.Empty;
+
+                sb.AppendLine($"{linePrefix}[{sourceLabel}{sourcePressure}] Pressure {state.Pressure_Pa:0.###} Pa, Flow {state.Flow_m3s:0.###} m³/s{deltaLabel}");
             }
             else if (!hasSnapshot)
             {

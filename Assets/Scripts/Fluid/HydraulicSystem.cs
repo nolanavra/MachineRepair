@@ -17,6 +17,8 @@ namespace MachineRepair.Fluid
         {
             public float Pressure_Pa;
             public float Flow_m3s;
+            public bool IsSource;
+            public float SourcePressure_Pa;
         }
 
         private sealed class HydraulicSubgraph
@@ -54,7 +56,9 @@ namespace MachineRepair.Fluid
         private readonly Dictionary<int, List<PortReference>> portsByNode = new();
         private readonly Dictionary<Vector2Int, float> portPressureByCell = new();
         private readonly Dictionary<Vector2Int, float> portFlowByCell = new();
+        private readonly Dictionary<Vector2Int, bool> sourceByCell = new();
         private readonly Dictionary<Vector2Int, PortHydraulicState> portStatesByCell = new();
+        private readonly Dictionary<Vector2Int, float> pipeDeltaPByCell = new();
         private readonly List<HydraulicEdgeBinding> pipeBindings = new();
         private readonly List<SimulationManager.WaterFlowArrow> arrowBuffer = new();
 
@@ -82,6 +86,8 @@ namespace MachineRepair.Fluid
         public IReadOnlyList<HydraulicNode> Nodes => nodes;
         public IReadOnlyList<HydraulicEdge> Edges => edges;
         public IReadOnlyDictionary<Vector2Int, PortHydraulicState> PortStates => portStatesByCell;
+        public IReadOnlyDictionary<Vector2Int, bool> SourceByCell => sourceByCell;
+        public IReadOnlyDictionary<Vector2Int, float> PipeDeltaPByCell => pipeDeltaPByCell;
         public float[] PressureField => pressureField;
         public float[] FlowField => flowField;
         public IReadOnlyList<SimulationManager.WaterFlowArrow> FlowArrows => arrowBuffer;
@@ -191,9 +197,10 @@ namespace MachineRepair.Fluid
                         Vector2Int global = component.GetGlobalCell(port);
                         if (!grid.InBounds(global.x, global.y)) continue;
 
-                        bool isFixed = component.def.componentType == ComponentType.ChassisWaterConnection;
+                        bool isSource = component.def.componentType == ComponentType.ChassisWaterConnection;
+                        bool isFixed = isSource;
                         double pressure = Math.Max(0d, component.def.maxPressure);
-                        int nodeIndex = GetOrCreateNode(global, pressure, isFixed);
+                        int nodeIndex = GetOrCreateNode(global, pressure, isFixed, isSource);
 
                         if (!portsByNode.TryGetValue(nodeIndex, out var list))
                         {
@@ -504,7 +511,9 @@ namespace MachineRepair.Fluid
 
             portPressureByCell.Clear();
             portFlowByCell.Clear();
+            sourceByCell.Clear();
             portStatesByCell.Clear();
+            pipeDeltaPByCell.Clear();
             arrowBuffer.Clear();
         }
 
@@ -521,12 +530,14 @@ namespace MachineRepair.Fluid
                 float pressure = (float)Math.Max(0d, node.Pressure_Pa);
                 pressureField[idx] = Math.Max(pressureField[idx], pressure);
                 portPressureByCell[node.Cell] = pressure;
+                sourceByCell[node.Cell] = node.IsSource;
             }
 
             for (int i = 0; i < edges.Count; i++)
             {
                 var edge = edges[i];
                 float flow = (float)edge.Flow_m3s;
+                float deltaP = (float)Math.Abs(edge.LastDeltaP_Pa);
 
                 var nodeA = nodes[edge.NodeA];
                 var nodeB = nodes[edge.NodeB];
@@ -537,6 +548,7 @@ namespace MachineRepair.Fluid
                 if (edge.Tag is HydraulicEdgeBinding binding)
                 {
                     StampPipeFlow(binding, Math.Abs(flow));
+                    StampPipeDeltaP(binding, deltaP);
                     if (binding.Pipe != null)
                     {
                         binding.Pipe.flow = flow;
@@ -564,6 +576,22 @@ namespace MachineRepair.Fluid
             }
         }
 
+        private void StampPipeDeltaP(HydraulicEdgeBinding binding, float deltaP)
+        {
+            if (grid == null || binding.OccupiedCells == null) return;
+
+            for (int i = 0; i < binding.OccupiedCells.Count; i++)
+            {
+                var cell = binding.OccupiedCells[i];
+                if (!grid.InBounds(cell.x, cell.y)) continue;
+
+                if (!pipeDeltaPByCell.TryGetValue(cell, out var existing) || deltaP > existing)
+                {
+                    pipeDeltaPByCell[cell] = deltaP;
+                }
+            }
+        }
+
         private void AccumulatePortFlow(Vector2Int cell, float contribution)
         {
             if (portFlowByCell.TryGetValue(cell, out var existing))
@@ -582,10 +610,23 @@ namespace MachineRepair.Fluid
             {
                 var cell = kvp.Key;
                 float pressure = kvp.Value;
+                bool isSource = sourceByCell.TryGetValue(cell, out var fromStamp) && fromStamp;
+                float sourcePressure = 0f;
+
+                if (nodeIndexByCell.TryGetValue(cell, out var nodeIndex) && nodeIndex >= 0 && nodeIndex < nodes.Count)
+                {
+                    var node = nodes[nodeIndex];
+                    isSource = node.IsSource;
+                    sourcePressure = (float)Math.Max(0d, node.SourcePressure_Pa > 0d ? node.SourcePressure_Pa : node.FixedPressure_Pa);
+                    sourceByCell[cell] = isSource;
+                }
+
                 portStatesByCell[cell] = new PortHydraulicState
                 {
                     Pressure_Pa = pressure,
-                    Flow_m3s = portFlowByCell.TryGetValue(cell, out var flow) ? flow : 0f
+                    Flow_m3s = portFlowByCell.TryGetValue(cell, out var flow) ? flow : 0f,
+                    IsSource = isSource,
+                    SourcePressure_Pa = sourcePressure
                 };
             }
         }
@@ -696,10 +737,25 @@ namespace MachineRepair.Fluid
             return pipes;
         }
 
-        private int GetOrCreateNode(Vector2Int cell, double pressure, bool isFixed)
+        private int GetOrCreateNode(Vector2Int cell, double pressure, bool isFixed, bool isSource)
         {
             if (nodeIndexByCell.TryGetValue(cell, out var existing))
             {
+                var existingNode = nodes[existing];
+                existingNode.IsSource |= isSource;
+                existingNode.IsFixedPressure |= isFixed || isSource;
+                if (isFixed || isSource)
+                {
+                    double clamped = Math.Max(0d, pressure);
+                    existingNode.FixedPressure_Pa = Math.Max(existingNode.FixedPressure_Pa, clamped);
+                    if (isSource)
+                    {
+                        existingNode.SourcePressure_Pa = Math.Max(existingNode.SourcePressure_Pa, clamped);
+                    }
+                }
+
+                existingNode.Pressure_Pa = Math.Max(existingNode.Pressure_Pa, pressure);
+                nodes[existing] = existingNode;
                 return existing;
             }
 
@@ -708,9 +764,11 @@ namespace MachineRepair.Fluid
             {
                 Id = index,
                 Cell = cell,
-                IsFixedPressure = isFixed,
-                FixedPressure_Pa = isFixed ? pressure : 0d,
-                Pressure_Pa = pressure,
+                IsSource = isSource,
+                IsFixedPressure = isFixed || isSource,
+                FixedPressure_Pa = (isFixed || isSource) ? Math.Max(0d, pressure) : 0d,
+                SourcePressure_Pa = isSource ? Math.Max(0d, pressure) : 0d,
+                Pressure_Pa = Math.Max(0d, pressure),
                 Injection_m3s = 0d
             };
 

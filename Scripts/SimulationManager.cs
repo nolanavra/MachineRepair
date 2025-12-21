@@ -40,6 +40,8 @@ namespace MachineRepair
         private HydraulicSystem hydraulicSystem;
         private HydraulicSolveResult hydraulicSolveResult;
         private readonly Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState> hydraulicPortStates = new();
+        private readonly Dictionary<Vector2Int, bool> hydraulicSources = new();
+        private readonly Dictionary<Vector2Int, float> hydraulicPipeDeltaP = new();
 
         private readonly List<string> faultLog = new();
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
@@ -800,6 +802,9 @@ namespace MachineRepair
         {
             detectedLeaks.Clear();
             waterFlowArrows.Clear();
+            hydraulicPortStates.Clear();
+            hydraulicSources.Clear();
+            hydraulicPipeDeltaP.Clear();
 
             if (hydraulicSystem == null && grid != null)
             {
@@ -818,10 +823,17 @@ namespace MachineRepair
 
             CopyHydraulicField(hydraulicSystem.PressureField, ref pressureGraph);
             CopyHydraulicField(hydraulicSystem.FlowField, ref flowGraph);
-            hydraulicPortStates.Clear();
             foreach (var kvp in hydraulicSystem.PortStates)
             {
                 hydraulicPortStates[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in hydraulicSystem.SourceByCell)
+            {
+                hydraulicSources[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in hydraulicSystem.PipeDeltaPByCell)
+            {
+                hydraulicPipeDeltaP[kvp.Key] = kvp.Value;
             }
 
             if (hydraulicSystem.FlowArrows != null)
@@ -971,7 +983,9 @@ namespace MachineRepair
                 Faults = new List<string>(faultLog),
                 PowerLoops = CloneLoops(poweredLoops),
                 PortElectrical = new Dictionary<Vector2Int, PortElectricalState>(portElectricalState),
-                PortHydraulic = new Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState>(hydraulicPortStates)
+                PortHydraulic = new Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState>(hydraulicPortStates),
+                HydraulicSources = new Dictionary<Vector2Int, bool>(hydraulicSources),
+                PipeDeltaPByCell = new Dictionary<Vector2Int, float>(hydraulicPipeDeltaP)
             };
 
             SimulationStepCompleted?.Invoke();
@@ -1109,6 +1123,8 @@ namespace MachineRepair
             public IReadOnlyList<IReadOnlyList<Vector2Int>> PowerLoops;
             public IReadOnlyDictionary<Vector2Int, PortElectricalState> PortElectrical;
             public IReadOnlyDictionary<Vector2Int, HydraulicSystem.PortHydraulicState> PortHydraulic;
+            public IReadOnlyDictionary<Vector2Int, bool> HydraulicSources;
+            public IReadOnlyDictionary<Vector2Int, float> PipeDeltaPByCell;
 
             public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
             {
@@ -1131,6 +1147,30 @@ namespace MachineRepair
                 }
 
                 state = default;
+                return false;
+            }
+
+            public bool TryGetHydraulicSource(Vector2Int portCell, out bool isSource)
+            {
+                if (HydraulicSources != null && HydraulicSources.TryGetValue(portCell, out var source))
+                {
+                    isSource = source;
+                    return true;
+                }
+
+                isSource = default;
+                return false;
+            }
+
+            public bool TryGetPipeDeltaP(Vector2Int cell, out float deltaP)
+            {
+                if (PipeDeltaPByCell != null && PipeDeltaPByCell.TryGetValue(cell, out var stored))
+                {
+                    deltaP = stored;
+                    return true;
+                }
+
+                deltaP = default;
                 return false;
             }
         }

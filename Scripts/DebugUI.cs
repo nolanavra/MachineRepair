@@ -137,18 +137,33 @@ namespace MachineRepair.Grid {
             bool hasWaterPort = TryGetWaterPortCell(cell, cellPosition, out var portCell);
             float portPressure = pressure;
             float portFlow = flow;
+            bool isSource = false;
+            float sourcePressure = 0f;
             if (hasWaterPort && snapshot.TryGetPortHydraulicState(portCell, out var portState))
             {
                 portPressure = portState.Pressure_Pa;
                 portFlow = portState.Flow_m3s;
+                isSource = portState.IsSource;
+                sourcePressure = portState.SourcePressure_Pa;
+            }
+            else if (hasWaterPort && snapshot.TryGetHydraulicSource(portCell, out var snapshotSource))
+            {
+                isSource = snapshotSource;
             }
 
             string portLine = hasWaterPort
                 ? $"Port Pressure/Flow: {portPressure:0.###} | {portFlow:0.###}"
                 : "Port Pressure/Flow: (no water port)";
+            string sourcePressureSuffix = isSource && sourcePressure > 0f ? $" @ {sourcePressure:0.###} Pa" : string.Empty;
+            string sourceLine = hasWaterPort
+                ? $"Supply Node: {(isSource ? "Yes" : "No")}{sourcePressureSuffix}"
+                : "Supply Node: (no water port)";
+            string deltaPLine = snapshot.TryGetPipeDeltaP(cellPosition, out var deltaP)
+                ? $"Pipe ΔP: {deltaP:0.###} Pa"
+                : "Pipe ΔP: (no pipe)";
 
             waterConditions.text =
-                $"Water: {state} ({runState})\nCell Pressure/Flow: {pressure:0.###} | {flow:0.###}\n{portLine}";
+                $"Water: {state} ({runState})\nCell Pressure/Flow: {pressure:0.###} | {flow:0.###}\n{portLine}\n{sourceLine}\n{deltaPLine}";
         }
 
         private static bool TryGetWaterPortCell(cellDef cell, Vector2Int hoveredCell, out Vector2Int portCell)

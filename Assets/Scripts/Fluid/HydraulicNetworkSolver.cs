@@ -118,9 +118,10 @@ namespace MachineRepair.Fluid
             for (int i = 0; i < nodes.Count; i++)
             {
                 var node = nodes[i];
-                if (node.IsFixedPressure)
+                bool isFixed = node.IsFixedPressure || node.IsSource;
+                if (isFixed)
                 {
-                    workingPressures[i] = node.FixedPressure_Pa;
+                    workingPressures[i] = ResolveFixedPressure(node);
                     continue;
                 }
 
@@ -138,7 +139,8 @@ namespace MachineRepair.Fluid
             for (int i = 0; i < nodes.Count; i++)
             {
                 var node = nodes[i];
-                workingPressures[i] = node.IsFixedPressure ? node.FixedPressure_Pa : Math.Max(node.Pressure_Pa, 0d);
+                bool isFixed = node.IsFixedPressure || node.IsSource;
+                workingPressures[i] = isFixed ? ResolveFixedPressure(node) : Math.Max(node.Pressure_Pa, 0d);
             }
         }
 
@@ -155,6 +157,16 @@ namespace MachineRepair.Fluid
         private static void CommitEdges(IList<HydraulicEdge> edges)
         {
             // Edges are already updated by reference; this exists for symmetry and clarity.
+        }
+
+        private static double ResolveFixedPressure(HydraulicNode node)
+        {
+            if (node.IsSource && node.SourcePressure_Pa > 0d)
+            {
+                return node.SourcePressure_Pa;
+            }
+
+            return node.FixedPressure_Pa;
         }
 
         private void EnsureBufferSize(int nodeCount)
