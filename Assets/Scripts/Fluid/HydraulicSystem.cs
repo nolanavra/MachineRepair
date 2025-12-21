@@ -55,7 +55,7 @@ namespace MachineRepair.Fluid
         private readonly Dictionary<Vector2Int, int> nodeIndexByCell = new();
         private readonly Dictionary<int, List<PortReference>> portsByNode = new();
         private readonly Dictionary<Vector2Int, float> portPressureByCell = new();
-        private readonly Dictionary<Vector2Int, float> portFlowByCell = new();
+        private readonly Dictionary<Vector2Int, FlowAccumulator> portFlowByCell = new();
         private readonly Dictionary<Vector2Int, bool> sourceByCell = new();
         private readonly Dictionary<Vector2Int, PortHydraulicState> portStatesByCell = new();
         private readonly Dictionary<Vector2Int, float> pipeDeltaPByCell = new();
@@ -587,14 +587,13 @@ namespace MachineRepair.Fluid
 
         private void AccumulatePortFlow(Vector2Int cell, float contribution)
         {
-            if (portFlowByCell.TryGetValue(cell, out var existing))
+            if (!portFlowByCell.TryGetValue(cell, out var accumulator))
             {
-                portFlowByCell[cell] = existing + contribution;
+                accumulator = default;
             }
-            else
-            {
-                portFlowByCell[cell] = contribution;
-            }
+
+            accumulator.Add(contribution);
+            portFlowByCell[cell] = accumulator;
         }
 
         private void BuildPortStates()
@@ -614,10 +613,16 @@ namespace MachineRepair.Fluid
                     sourceByCell[cell] = isSource;
                 }
 
+                float flow = 0f;
+                if (portFlowByCell.TryGetValue(cell, out var accumulator))
+                {
+                    flow = accumulator.ResolveDisplayFlow();
+                }
+
                 portStatesByCell[cell] = new PortHydraulicState
                 {
                     Pressure_Pa = pressure,
-                    Flow_m3s = portFlowByCell.TryGetValue(cell, out var flow) ? flow : 0f,
+                    Flow_m3s = flow,
                     IsSource = isSource,
                     SourcePressure_Pa = sourcePressure
                 };
@@ -785,6 +790,35 @@ namespace MachineRepair.Fluid
             nodes.Add(node);
             nodeIndexByCell[cell] = index;
             return index;
+        }
+
+        private struct FlowAccumulator
+        {
+            private float net;
+            private float dominantContribution;
+
+            public void Add(float contribution)
+            {
+                net += contribution;
+
+                if (Mathf.Abs(contribution) > Mathf.Abs(dominantContribution))
+                {
+                    dominantContribution = contribution;
+                }
+            }
+
+            public float ResolveDisplayFlow()
+            {
+                float dominantMagnitude = Mathf.Abs(dominantContribution);
+                float netMagnitude = Mathf.Abs(net);
+
+                if (netMagnitude > dominantMagnitude)
+                {
+                    return net;
+                }
+
+                return dominantContribution;
+            }
         }
 
         private readonly struct PortReference
