@@ -30,7 +30,7 @@ namespace MachineRepair.Fluid
 
         private sealed class HydraulicEdgeBinding
         {
-            public int EdgeIndex;
+            public int EdgeIndex = -1;
             public PlacedPipe Pipe;
             public Vector2Int StartCell;
             public Vector2Int EndCell;
@@ -217,9 +217,8 @@ namespace MachineRepair.Fluid
         private void BuildEdges()
         {
             var internalKeys = new HashSet<(int, int)>();
-            var pipeKeys = new HashSet<(int, int)>();
             BuildInternalConnections(internalKeys);
-            BuildPipeConnections(pipeKeys);
+            BuildPipeConnections();
         }
 
         private void BuildInternalConnections(HashSet<(int, int)> connectionKeys)
@@ -279,7 +278,7 @@ namespace MachineRepair.Fluid
             }
         }
 
-        private void BuildPipeConnections(HashSet<(int, int)> pipeKeys)
+        private void BuildPipeConnections()
         {
             if (grid == null) return;
 
@@ -290,12 +289,6 @@ namespace MachineRepair.Fluid
 
                 if (!nodeIndexByCell.TryGetValue(pipe.startPortCell, out var startIndex)) continue;
                 if (!nodeIndexByCell.TryGetValue(pipe.endPortCell, out var endIndex)) continue;
-
-                int keyA = Math.Min(startIndex, endIndex);
-                int keyB = Math.Max(startIndex, endIndex);
-                var key = (keyA, keyB);
-                if (pipeKeys.Contains(key)) continue;
-                pipeKeys.Add(key);
 
                 var binding = BuildPipeBinding(pipe);
                 var element = BuildPipeModel(pipe);
