@@ -129,6 +129,58 @@ namespace MachineRepair.Tests
             Assert.That(system.FlowField, Is.All.EqualTo(0f), "Flow field should be zeroed when disabled.");
         }
 
+        [Test]
+        public void HydraulicSystem_AllowsParallelPipesBetweenSameNodes()
+        {
+            var singleGrid = CreateTestGrid();
+            var singleSource = CreateWaterComponent(singleGrid, new Vector2Int(0, 0), maxPressure: 200_000f);
+            var singleSink = CreateWaterComponent(singleGrid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var singlePath = new List<Vector2Int>
+            {
+                singleSource.component.GetGlobalCell(singleSource.port),
+                new Vector2Int(1, 0),
+                singleSink.component.GetGlobalCell(singleSink.port)
+            };
+
+            _ = CreatePipeRun(singleGrid, singleSource, singleSink, singlePath);
+
+            var singleSystem = new HydraulicSystem(singleGrid);
+            singleSystem.SetWaterEnabled(true);
+            singleSystem.Solve();
+
+            var singleSourceCell = singleSource.component.GetGlobalCell(singleSource.port);
+            Assert.That(singleSystem.PortStates.ContainsKey(singleSourceCell), "Baseline run should report the source port.");
+            float singleFlow = Mathf.Abs(singleSystem.PortStates[singleSourceCell].Flow_m3s);
+            Assert.That(singleFlow, Is.GreaterThan(1e-6f), "Baseline single-pipe flow should be non-zero.");
+
+            var dualGrid = CreateTestGrid();
+            var dualSource = CreateWaterComponent(dualGrid, new Vector2Int(0, 0), maxPressure: 200_000f);
+            var dualSink = CreateWaterComponent(dualGrid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var dualPath = new List<Vector2Int>
+            {
+                dualSource.component.GetGlobalCell(dualSource.port),
+                new Vector2Int(1, 0),
+                dualSink.component.GetGlobalCell(dualSink.port)
+            };
+
+            _ = CreatePipeRun(dualGrid, dualSource, dualSink, dualPath);
+            _ = CreatePipeRun(dualGrid, dualSource, dualSink, new List<Vector2Int>(dualPath));
+
+            var dualSystem = new HydraulicSystem(dualGrid);
+            dualSystem.SetWaterEnabled(true);
+            dualSystem.Solve();
+
+            var dualSourceCell = dualSource.component.GetGlobalCell(dualSource.port);
+            var dualSinkCell = dualSink.component.GetGlobalCell(dualSink.port);
+            Assert.That(dualSystem.Edges.Count, Is.EqualTo(2), "Each pipe run should be registered as its own hydraulic edge.");
+            Assert.That(dualSystem.PortStates.ContainsKey(dualSourceCell), "Parallel run should report the source port.");
+            Assert.That(dualSystem.PortStates.ContainsKey(dualSinkCell), "Parallel run should report the sink port.");
+
+            float dualFlow = Mathf.Abs(dualSystem.PortStates[dualSourceCell].Flow_m3s);
+            Assert.That(dualFlow, Is.GreaterThan(singleFlow), "Parallel pipes should increase available flow at the source node.");
+            Assert.That(Mathf.Abs(dualSystem.PortStates[dualSinkCell].Flow_m3s), Is.GreaterThan(1e-6f), "Sink should still record flow when parallel pipes are present.");
+        }
+
         private GridManager CreateTestGrid()
         {
             var go = new GameObject("GridManager");
