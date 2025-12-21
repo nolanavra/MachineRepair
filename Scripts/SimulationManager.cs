@@ -30,6 +30,8 @@ namespace MachineRepair
 
         private float stepTimer;
         private int simulationStepCount;
+        private bool simulationStepInProgress;
+        private int lastSimulationStepFrame = -1;
 
         // Graph buffers (per cell) for electrical, hydraulic, and signal states.
         private float[] pressureGraph;
@@ -137,14 +139,26 @@ namespace MachineRepair
         public void RunSimulationStep()
         {
             if (grid == null) return;
+            if (simulationStepInProgress) return;
+            if (lastSimulationStepFrame == Time.frameCount) return;
 
-            BuildGraphs();
-            PropagateVoltageCurrent();
-            SimulateHydraulics();
-            EvaluateSignalStates();
-            UpdateComponentBehaviors();
-            DetectFaults();
-            EmitSimulationSnapshot();
+            simulationStepInProgress = true;
+
+            try
+            {
+                BuildGraphs();
+                PropagateVoltageCurrent();
+                SimulateHydraulics();
+                EvaluateSignalStates();
+                UpdateComponentBehaviors();
+                DetectFaults();
+                EmitSimulationSnapshot();
+                lastSimulationStepFrame = Time.frameCount;
+            }
+            finally
+            {
+                simulationStepInProgress = false;
+            }
         }
 
         public void SetSimulationRunning(bool shouldRun)
@@ -189,6 +203,17 @@ namespace MachineRepair
             WaterToggled?.Invoke(waterOn);
 
             ClearWaterFlowArrows();
+
+            bool canRunHydraulicStep =
+                waterOn &&
+                grid != null &&
+                !simulationStepInProgress &&
+                lastSimulationStepFrame != Time.frameCount;
+
+            if (canRunHydraulicStep)
+            {
+                RunSimulationStep();
+            }
         }
 
         private void BuildGraphs()
