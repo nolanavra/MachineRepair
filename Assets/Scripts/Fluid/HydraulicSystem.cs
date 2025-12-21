@@ -197,9 +197,9 @@ namespace MachineRepair.Fluid
                         Vector2Int global = component.GetGlobalCell(port);
                         if (!grid.InBounds(global.x, global.y)) continue;
 
-                        bool isSource = component.def.componentType == ComponentType.ChassisWaterConnection;
-                        bool isFixed = isSource;
-                        double pressure = Math.Max(0d, component.def.maxPressure);
+                        bool isSource = IsHydraulicSupply(component);
+                        double pressure = isSource ? ResolveSourcePressure(component) : 0d;
+                        bool isFixed = isSource && pressure > 0d;
                         int nodeIndex = GetOrCreateNode(global, pressure, isFixed, isSource);
 
                         if (!portsByNode.TryGetValue(nodeIndex, out var list))
@@ -735,6 +735,23 @@ namespace MachineRepair.Fluid
             }
 
             return pipes;
+        }
+
+        private static bool IsHydraulicSupply(MachineComponent component)
+        {
+            return component != null
+                   && component.def != null
+                   && component.def.componentType == ComponentType.ChassisWaterConnection;
+        }
+
+        private static double ResolveSourcePressure(MachineComponent component)
+        {
+            if (component == null || component.def == null || !IsHydraulicSupply(component))
+            {
+                return 0d;
+            }
+
+            return Math.Max(0d, component.def.maxPressure);
         }
 
         private int GetOrCreateNode(Vector2Int cell, double pressure, bool isFixed, bool isSource)

@@ -91,6 +91,25 @@ namespace MachineRepair.Tests
         }
 
         [Test]
+        public void HydraulicSystem_NonSourceNodesStartAtNeutralPressure()
+        {
+            var grid = CreateTestGrid();
+            var isolated = CreateWaterComponent(grid, new Vector2Int(1, 0), maxPressure: 150_000f, componentType: ComponentType.Boiler);
+
+            var system = new HydraulicSystem(grid);
+            system.SetWaterEnabled(true);
+            system.Solve();
+
+            Vector2Int portCell = isolated.component.GetGlobalCell(isolated.port);
+            Assert.That(system.PortStates.ContainsKey(portCell), "Isolated port should produce a hydraulic state entry.");
+
+            var state = system.PortStates[portCell];
+            Assert.IsFalse(state.IsSource, "Non-supply nodes should not be flagged as sources.");
+            Assert.That(state.SourcePressure_Pa, Is.EqualTo(0f), "Non-supply nodes should not expose a source pressure.");
+            Assert.That(state.Pressure_Pa, Is.EqualTo(0f).Within(1e-5f), "Non-supply nodes should start at neutral pressure.");
+        }
+
+        [Test]
         public void HydraulicSystem_DisablesWaterAndClearsOutput()
         {
             var grid = CreateTestGrid();

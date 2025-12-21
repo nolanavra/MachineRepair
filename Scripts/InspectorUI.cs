@@ -249,6 +249,8 @@ public class InspectorUI : MonoBehaviour
         bool powered = false;
         float flowIn = 0f;
         float pressure = 0f;
+        float maxPortPressure = 0f;
+        float maxPortSourcePressure = 0f;
 
         Vector2Int targetCell = component != null ? component.anchorCell : selection.cell;
         bool cellValid = grid != null && grid.InBounds(targetCell.x, targetCell.y);
@@ -280,12 +282,18 @@ public class InspectorUI : MonoBehaviour
             sb.AppendLine("- Simulation snapshot unavailable.");
         }
 
+        CollectWaterPortPressures(component, snapshot, hasSnapshot, out maxPortPressure, out maxPortSourcePressure);
+
         sb.AppendLine($"- Powered: {powered}");
         sb.AppendLine($"- Water Flow In: {flowIn:F2}");
 
         if (def.componentType == ComponentType.Boiler)
         {
-            float fillPercent = def.maxPressure > 0f ? Mathf.Clamp01(pressure / def.maxPressure) * 100f : 0f;
+            float observedPressure = maxPortPressure > 0f ? maxPortPressure : pressure;
+            float referencePressure = maxPortSourcePressure > 0f ? maxPortSourcePressure : observedPressure;
+            float fillPercent = referencePressure > 0f
+                ? Mathf.Clamp01(observedPressure / referencePressure) * 100f
+                : 0f;
             float temperature = powered ? Mathf.Max(def.targetTempMin, def.temperatureC) : def.temperatureC;
 
             sb.AppendLine($"- Fill: {fillPercent:F0}%");
@@ -295,6 +303,42 @@ public class InspectorUI : MonoBehaviour
         AppendWaterPortHydraulicStates(sb, component, snapshot, hasSnapshot);
 
         return sb.ToString();
+    }
+
+    private static void CollectWaterPortPressures(
+        MachineComponent component,
+        SimulationManager.SimulationSnapshot snapshot,
+        bool hasSnapshot,
+        out float maxPortPressure,
+        out float maxSourcePressure)
+    {
+        maxPortPressure = 0f;
+        maxSourcePressure = 0f;
+
+        if (!hasSnapshot || component?.portDef?.ports == null || component.portDef.ports.Length == 0)
+        {
+            return;
+        }
+
+        var ports = component.portDef.ports;
+        for (int i = 0; i < ports.Length; i++)
+        {
+            var port = ports[i];
+            if (port.portType != PortType.Water)
+            {
+                continue;
+            }
+
+            Vector2Int globalPortCell = component.GetGlobalCell(port);
+            if (snapshot.TryGetPortHydraulicState(globalPortCell, out HydraulicSystem.PortHydraulicState state))
+            {
+                maxPortPressure = Mathf.Max(maxPortPressure, state.Pressure_Pa);
+                if (state.SourcePressure_Pa > 0f)
+                {
+                    maxSourcePressure = Mathf.Max(maxSourcePressure, state.SourcePressure_Pa);
+                }
+            }
+        }
     }
 
     private static void AppendWaterPortHydraulicStates(
