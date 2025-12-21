@@ -47,6 +47,7 @@ This repository contains a Unity 2D prototype for wiring up an espresso-machine 
      - `playerInput`: PlayerInput (for `Point` action when previewing).
      - `wirePreviewPrefab`: a LineRenderer prefab for preview lines; set width and material as desired.
    - Optional tuning: `wireColor`, `wireType`, preview Z offset, line width, and simulation defaults for resistance/current limits.
+   - Preview coloring and final tinting are driven by WirePlacementTool (see `SetWireColor`, `SetWireType`, and the assigned `WireDef` colors); InputRouter simply forwards clicks and pointer positions.
    - InputRouter calls `HandleClick` in Wire mode; first click starts a preview, second finalizes a wire between compatible power ports.
 
 6. **UI wiring**
@@ -61,7 +62,7 @@ This repository contains a Unity 2D prototype for wiring up an espresso-machine 
 
 7. **Rendering helpers**
    - **CellRenderer** paints placed components and overlays by reading GridManager occupancy.
-   - **WireColorUI** is deprecated; prefer InputRouter + WirePlacementTool for live wire feedback.
+   - Wire preview/feedback lives inside **WirePlacementTool** and its LineRenderer setup; no separate WireColorUI component is needed.
    - **ForceSpriteSize** ensures sprites render at consistent cell sizes in UI or world space.
 
 ## Expected play loop
