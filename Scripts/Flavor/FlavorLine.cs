@@ -10,6 +10,18 @@ namespace MachineRepair.Flavor
     public class FlavorLine : ScriptableObject
     {
         [System.Serializable]
+        public class Segment
+        {
+            [TextArea(2, 5)]
+            [Tooltip("Segment template text; placeholders match the legacy template field.")]
+            public string text = string.Empty;
+
+            [Min(0f)]
+            [Tooltip("Optional delay for this segment before advancing to the next.")]
+            public float delaySeconds = 0f;
+        }
+
+        [System.Serializable]
         public class TaggedAudience
         {
             [Tooltip("Audience tag this line caters to.")]
@@ -28,6 +40,13 @@ namespace MachineRepair.Flavor
         {
             new TaggedAudience { tag = FlavorContextTag.General, weight = 1 }
         };
+
+        [Tooltip("Optional ordered segments to play sequentially; falls back to the template when empty.")]
+        public List<Segment> segments = new();
+
+        [Min(0f)]
+        [Tooltip("Default delay to use for segments when none is specified; 0 uses the chat service fallback.")]
+        public float defaultSegmentDelaySeconds = 0f;
 
         [Min(0)] public int weight = 1;
         [Min(0)] public float minCooldownSeconds = 300f;
