@@ -58,5 +58,8 @@ namespace MachineRepair.Flavor
         public bool requirePowerRouting = false;
 
         public bool oncePerSession = false;
+
+        [Tooltip("Optional response set to present after this line plays.")]
+        public FlavorResponseSet responses;
     }
 }

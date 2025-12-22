@@ -22,6 +22,10 @@ namespace MachineRepair.Flavor
         [SerializeField, Min(0f), Tooltip("Fallback delay for flavor line segments when no per-line value is supplied.")] private float defaultSegmentDelaySeconds = 1.5f;
         [SerializeField, Min(0f), Tooltip("Extra time appended after the final segment before fading out.")] private float segmentTailPaddingSeconds = 0.5f;
 
+        [Header("Responses")]
+        [SerializeField, Tooltip("UI surface for canned responses while a bubble is active.")] private FlavorResponseUI responseUI;
+        [SerializeField, Min(0f), Tooltip("Minimum lifetime for bubbles that expect a response.")] private float responseHoldSeconds = 4f;
+
         [Header("Portrait Spawn")]
         [Tooltip("Prefab with a SpriteRenderer used to show the speaking customer's portrait in world space.")]
         [SerializeField] private SpriteRenderer portraitPrefab;
@@ -48,6 +52,8 @@ namespace MachineRepair.Flavor
         private Coroutine _loop;
         private RectTransform _resolvedParent;
         private CustomerInstance _lastSpeaker;
+        private Coroutine _responseRoutine;
+        private bool _awaitingResponse;
 
         void Awake()
         {
@@ -67,6 +73,12 @@ namespace MachineRepair.Flavor
         {
             if (_loop != null) StopCoroutine(_loop);
             _loop = null;
+
+            if (_responseRoutine != null)
+                StopCoroutine(_responseRoutine);
+            _responseRoutine = null;
+            _awaitingResponse = false;
+            responseUI?.Hide();
         }
 
         IEnumerator Loop()
@@ -102,6 +114,12 @@ namespace MachineRepair.Flavor
         void TryEmit(bool forced)
         {
             if (verbose) Debug.Log($"[FlavorChatService] TryEmit(forced={forced})");
+
+            if (_awaitingResponse)
+            {
+                if (verbose) Debug.Log("[FlavorChatService] Awaiting player response; skipping emit.");
+                return;
+            }
 
             if (bank == null || bank.lines == null || bank.lines.Count == 0)
             {
@@ -178,22 +196,202 @@ namespace MachineRepair.Flavor
                 return;
             }
 
-            float defaultDelay = ResolveDefaultDelay(chosen);
-            bool usedAuthoredSegments;
-            var segments = BuildSegments(chosen, ctx, defaultDelay, out usedAuthoredSegments);
-            float lifetime = ComputeLifetime(segments, usedAuthoredSegments);
-            float playbackDefaultDelay = usedAuthoredSegments ? defaultDelay : 0f;
-            SpawnBubble(segments, playbackDefaultDelay, lifetime, chosenSpeaker);
+            EmitLine(chosen, chosenSpeaker, ctx, forced);
+        }
 
-            _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
-            if (chosen.oncePerSession) _shownThisSession.Add(chosen);
-            _lastSpeaker = chosenSpeaker;
+        bool EmitLine(FlavorLine line, CustomerInstance speaker, FlavorContext ctx, bool forced)
+        {
+            if (line == null) return false;
+
+            float defaultDelay = ResolveDefaultDelay(line);
+            bool usedAuthoredSegments;
+            var segments = BuildSegments(line, ctx, defaultDelay, out usedAuthoredSegments);
+            float lifetime = ComputeLifetime(segments, usedAuthoredSegments);
+            if (line.responses != null && line.responses.options != null && line.responses.options.Count > 0)
+            {
+                lifetime = Mathf.Max(lifetime, responseHoldSeconds);
+            }
+
+            float playbackDefaultDelay = usedAuthoredSegments ? defaultDelay : 0f;
+            var bubble = SpawnBubble(segments, playbackDefaultDelay, lifetime, speaker);
+
+            double now = Time.realtimeSinceStartupAsDouble;
+            _nextAllowed[line] = now + line.minCooldownSeconds;
+            if (line.oncePerSession) _shownThisSession.Add(line);
+            _lastSpeaker = speaker;
 
             if (verbose)
             {
                 string preview = (segments != null && segments.Count > 0) ? segments[0].Text : "<no text>";
                 Debug.Log($"[FlavorChatService] Emitted: {preview} (segments={segments?.Count ?? 0}, lifetime={lifetime:0.00}s)");
             }
+
+            HandleResponses(line, speaker, ctx, bubble);
+            return true;
+        }
+
+        void HandleResponses(FlavorLine line, CustomerInstance speaker, FlavorContext ctx, ChatBubbleUI bubble)
+        {
+            if (line?.responses == null || line.responses.options == null || line.responses.options.Count == 0)
+                return;
+
+            if (_responseRoutine != null)
+            {
+                StopCoroutine(_responseRoutine);
+                _responseRoutine = null;
+            }
+
+            if (responseUI == null)
+            {
+                if (verbose) Debug.LogWarning("[FlavorChatService] responseUI is not assigned; auto-resolving first response.");
+                AutoResolveResponse(line.responses, speaker, ctx);
+                return;
+            }
+
+            _responseRoutine = StartCoroutine(ResponseRoutine(line.responses, speaker, ctx, bubble));
+        }
+
+        IEnumerator ResponseRoutine(FlavorResponseSet responseSet, CustomerInstance speaker, FlavorContext ctx, ChatBubbleUI bubble)
+        {
+            _awaitingResponse = true;
+            var labels = BuildResponseLabels(responseSet);
+            if (labels == null || labels.Count == 0)
+            {
+                _awaitingResponse = false;
+                _responseRoutine = null;
+                yield break;
+            }
+
+            bool shown = responseUI.ShowResponses(labels, i => OnResponseChosen(responseSet, i, speaker, ctx));
+            if (!shown)
+            {
+                _awaitingResponse = false;
+                _responseRoutine = null;
+                yield break;
+            }
+
+            while (_awaitingResponse)
+            {
+                if (bubble == null)
+                {
+                    _awaitingResponse = false;
+                    responseUI.Hide();
+                    break;
+                }
+                yield return null;
+            }
+
+            _responseRoutine = null;
+        }
+
+        void OnResponseChosen(FlavorResponseSet responseSet, int index, CustomerInstance speaker, FlavorContext ctx)
+        {
+            if (!_awaitingResponse && _responseRoutine != null)
+                return;
+
+            _awaitingResponse = false;
+            responseUI?.Hide();
+
+            if (responseSet?.options == null || index < 0 || index >= responseSet.options.Count)
+                return;
+
+            var option = responseSet.options[index];
+            if (option == null) return;
+
+            if (option.moodDelta != 0 && speaker != null)
+                AdjustMoodForCustomer(speaker, option.moodDelta);
+
+            FlavorLine followUp = PickFollowUp(option, speaker);
+            if (followUp != null)
+            {
+                var refreshedCtx = contextSource != null ? contextSource.CaptureFlavorContext() : ctx;
+                EmitLine(followUp, speaker, refreshedCtx, true);
+            }
+        }
+
+        void AutoResolveResponse(FlavorResponseSet responseSet, CustomerInstance speaker, FlavorContext ctx)
+        {
+            if (responseSet?.options == null || responseSet.options.Count == 0)
+                return;
+
+            int index = -1;
+            for (int i = 0; i < responseSet.options.Count; i++)
+            {
+                if (responseSet.options[i] != null)
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            if (index >= 0)
+                OnResponseChosen(responseSet, index, speaker, ctx);
+        }
+
+        List<string> BuildResponseLabels(FlavorResponseSet responseSet)
+        {
+            var labels = new List<string>();
+            if (responseSet?.options == null) return labels;
+
+            foreach (var option in responseSet.options)
+            {
+                if (option == null)
+                {
+                    labels.Add("Respond");
+                    continue;
+                }
+                labels.Add(string.IsNullOrWhiteSpace(option.label) ? "Respond" : option.label);
+            }
+
+            return labels;
+        }
+
+        FlavorLine PickFollowUp(FlavorResponseSet.ResponseOption option, CustomerInstance speaker)
+        {
+            if (option == null || option.followUps == null || option.followUps.Count == 0)
+                return null;
+
+            var weighted = new List<(FlavorLine line, int weight)>();
+            foreach (var target in option.followUps)
+            {
+                if (target == null || target.line == null) continue;
+
+                if (speaker != null)
+                {
+                    int mood = speaker.Mood;
+                    if (mood < target.minMood || mood > target.maxMood) continue;
+                }
+
+                int tagScore = 0;
+                if (speaker != null && target.preferredTags != null)
+                {
+                    foreach (var t in target.preferredTags)
+                    {
+                        if (speaker.HasTag(t))
+                            tagScore += 1;
+                    }
+                }
+
+                float moodFactor = speaker != null ? speaker.MoodFactor : 1f;
+                int weight = Mathf.Max(1, Mathf.RoundToInt((target.weight + tagScore) * moodFactor));
+                weighted.Add((target.line, weight));
+            }
+
+            if (weighted.Count == 0)
+                return null;
+
+            int sum = 0;
+            foreach (var item in weighted) sum += item.weight;
+
+            int pick = Random.Range(0, sum);
+            foreach (var item in weighted)
+            {
+                if (pick < item.weight)
+                    return item.line;
+                pick -= item.weight;
+            }
+
+            return weighted[0].line;
         }
 
         // ----------------- Helpers defined in THIS CLASS -----------------
@@ -279,19 +477,19 @@ namespace MachineRepair.Flavor
             return defaultSegmentDelaySeconds;
         }
 
-        void SpawnBubble(IReadOnlyList<ChatBubbleSegment> segments, float defaultDelaySeconds, float lifetimeSeconds, CustomerInstance speaker = null)
+        ChatBubbleUI SpawnBubble(IReadOnlyList<ChatBubbleSegment> segments, float defaultDelaySeconds, float lifetimeSeconds, CustomerInstance speaker = null)
         {
             if (bubblePrefab == null)
             {
                 if (verbose) Debug.LogWarning("[FlavorChatService] bubblePrefab is null.");
-                return;
+                return null;
             }
 
             var parent = ResolveBubbleParent();
             if (parent == null)
             {
                 if (verbose) Debug.LogWarning("[FlavorChatService] Could not resolve a bubble parent.");
-                return;
+                return null;
             }
 
             if (!parent.gameObject.activeInHierarchy)
@@ -311,13 +509,14 @@ namespace MachineRepair.Flavor
             if (!ui.gameObject.activeInHierarchy)
             {
                 if (verbose) Debug.LogWarning("[FlavorChatService] Spawned bubble is still inactive in hierarchy; skipping Play().");
-                return;
+                return null;
             }
 
             ui.SetPortrait(null); // portrait now lives in world space
             ui.PlaySequence(segments, defaultDelaySeconds, Mathf.Max(0f, lifetimeSeconds));
 
             SpawnWorldPortrait(speaker?.Portrait, Mathf.Max(0f, lifetimeSeconds));
+            return ui;
         }
 
         CustomerInstance PickCustomer(List<(FlavorLine line, int weight)> candidates)
