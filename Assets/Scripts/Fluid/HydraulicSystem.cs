@@ -21,6 +21,19 @@ namespace MachineRepair.Fluid
             public float SourcePressure_Pa;
         }
 
+        public struct PipeRuntimeState
+        {
+            public Vector2Int StartCell;
+            public Vector2Int EndCell;
+            public float Volume_m3;
+            public float Fill01;
+            public float Flow_m3s;
+            public float InletPressure_Pa;
+            public float OutletPressure_Pa;
+
+            public float FillPercent => Fill01 * 100f;
+        }
+
         private sealed class HydraulicSubgraph
         {
             public readonly List<int> NodeIndices = new();
@@ -38,11 +51,13 @@ namespace MachineRepair.Fluid
             public Vector3[] Path;
             public Vector3[] ReversePath;
             public float PathLength;
+            public double Volume_m3;
         }
 
         private readonly GridManager grid;
         private readonly HydraulicNetworkSolver solver = new();
         private HydraulicSolverSettings settings;
+        private float stepDuration = 0.1f;
 
         private readonly List<HydraulicNode> nodes = new();
         private readonly List<HydraulicEdge> edges = new();
@@ -60,6 +75,8 @@ namespace MachineRepair.Fluid
         private readonly Dictionary<Vector2Int, PortHydraulicState> portStatesByCell = new();
         private readonly Dictionary<Vector2Int, float> pipeDeltaPByCell = new();
         private readonly List<HydraulicEdgeBinding> pipeBindings = new();
+        private readonly Dictionary<PlacedPipe, PipeRuntimeState> pipeRuntimeStateByPipe = new();
+        private readonly Dictionary<int, PipeRuntimeState> pipeRuntimeStateById = new();
         private readonly List<SimulationManager.WaterFlowArrow> arrowBuffer = new();
 
         private float[] pressureField = Array.Empty<float>();
@@ -88,6 +105,8 @@ namespace MachineRepair.Fluid
         public IReadOnlyDictionary<Vector2Int, PortHydraulicState> PortStates => portStatesByCell;
         public IReadOnlyDictionary<Vector2Int, bool> SourceByCell => sourceByCell;
         public IReadOnlyDictionary<Vector2Int, float> PipeDeltaPByCell => pipeDeltaPByCell;
+        public IReadOnlyDictionary<PlacedPipe, PipeRuntimeState> PipeRuntimeStates => pipeRuntimeStateByPipe;
+        public IReadOnlyDictionary<int, PipeRuntimeState> PipeRuntimeStatesById => pipeRuntimeStateById;
         public float[] PressureField => pressureField;
         public float[] FlowField => flowField;
         public IReadOnlyList<SimulationManager.WaterFlowArrow> FlowArrows => arrowBuffer;
@@ -108,6 +127,11 @@ namespace MachineRepair.Fluid
         public void SetWaterEnabled(bool enabled)
         {
             waterEnabled = enabled;
+        }
+
+        public void SetStepDuration(float durationSeconds)
+        {
+            stepDuration = Mathf.Max(1e-4f, durationSeconds);
         }
 
         public void MarkDirty()
@@ -218,7 +242,9 @@ namespace MachineRepair.Fluid
         {
             var internalKeys = new HashSet<(int, int)>();
             BuildInternalConnections(internalKeys);
-            BuildPipeConnections();
+            var pipes = CollectPipes();
+            BuildPipeConnections(pipes);
+            PrunePipeRuntimeState(pipes);
         }
 
         private void BuildInternalConnections(HashSet<(int, int)> connectionKeys)
@@ -278,11 +304,10 @@ namespace MachineRepair.Fluid
             }
         }
 
-        private void BuildPipeConnections()
+        private void BuildPipeConnections(List<PlacedPipe> pipes)
         {
-            if (grid == null) return;
+            if (grid == null || pipes == null) return;
 
-            var pipes = CollectPipes();
             foreach (var pipe in pipes)
             {
                 if (pipe == null) continue;
@@ -339,6 +364,7 @@ namespace MachineRepair.Fluid
 
             binding.Path = path.ToArray();
             binding.PathLength = pathLength;
+            binding.Volume_m3 = CalculatePipeVolume(pipe);
 
             path.Reverse();
             binding.ReversePath = path.ToArray();
@@ -349,7 +375,7 @@ namespace MachineRepair.Fluid
         private PipeElementModel BuildPipeModel(PlacedPipe pipe)
         {
             double length = CalculatePipeLength(pipe);
-            double diameter = DefaultDiameter_m;
+            double diameter = ResolvePipeDiameter(pipe);
             double roughness = DefaultRoughness_m;
             double density = DefaultDensity_kgm3;
             double viscosity = DefaultViscosity_Pa_s;
@@ -508,6 +534,8 @@ namespace MachineRepair.Fluid
             portStatesByCell.Clear();
             pipeDeltaPByCell.Clear();
             arrowBuffer.Clear();
+            pipeRuntimeStateById.Clear();
+            ResetPipeRuntimeSamples();
         }
 
         private void StampFields()
@@ -542,13 +570,7 @@ namespace MachineRepair.Fluid
                 {
                     StampPipeFlow(binding, Math.Abs(flow));
                     StampPipeDeltaP(binding, deltaP);
-                    if (binding.Pipe != null)
-                    {
-                        binding.Pipe.flow = flow;
-                        binding.Pipe.fillLevel = 100f;
-                        float pressure = Mathf.Max((float)nodeA.Pressure_Pa, (float)nodeB.Pressure_Pa);
-                        binding.Pipe.pressure = pressure;
-                    }
+                    UpdatePipeRuntimeState(binding, edge, nodeA, nodeB);
                 }
             }
         }
@@ -583,6 +605,99 @@ namespace MachineRepair.Fluid
                     pipeDeltaPByCell[cell] = deltaP;
                 }
             }
+        }
+
+        private void UpdatePipeRuntimeState(
+            HydraulicEdgeBinding binding,
+            HydraulicEdge edge,
+            HydraulicNode nodeA,
+            HydraulicNode nodeB)
+        {
+            if (binding == null) return;
+
+            double flow = edge.Flow_m3s;
+            double deltaP = Math.Abs(edge.LastDeltaP_Pa);
+            bool forward = flow >= 0d;
+            var inletNode = forward ? nodeA : nodeB;
+            var outletNode = forward ? nodeB : nodeA;
+
+            Vector2Int inletCell = forward ? binding.StartCell : binding.EndCell;
+            Vector2Int outletCell = forward ? binding.EndCell : binding.StartCell;
+
+            double inletPressure = Math.Max(0d, inletNode.Pressure_Pa);
+            double outletPressure = Math.Max(0d, inletPressure - deltaP);
+            if (Math.Abs(flow) <= 1e-9d)
+            {
+                outletPressure = Math.Max(0d, outletNode.Pressure_Pa);
+            }
+
+            UpdatePortPressure(inletCell, (float)inletPressure);
+            UpdatePortPressure(outletCell, (float)outletPressure);
+
+            if (binding.Pipe == null) return;
+
+            var state = GetOrCreatePipeRuntimeState(binding, inletPressure, outletPressure, flow);
+            binding.Pipe.flow = (float)flow;
+            binding.Pipe.fillLevel = state.FillPercent;
+            binding.Pipe.pressure = Mathf.Max(state.InletPressure_Pa, state.OutletPressure_Pa);
+        }
+
+        private void UpdatePortPressure(Vector2Int cell, float pressure)
+        {
+            if (grid == null || !grid.InBounds(cell.x, cell.y)) return;
+            pressure = Mathf.Max(0f, pressure);
+
+            if (portPressureByCell.TryGetValue(cell, out var existing))
+            {
+                portPressureByCell[cell] = Math.Min(existing, pressure);
+            }
+            else
+            {
+                portPressureByCell[cell] = pressure;
+            }
+        }
+
+        private PipeRuntimeState GetOrCreatePipeRuntimeState(
+            HydraulicEdgeBinding binding,
+            double inletPressure,
+            double outletPressure,
+            double flow_m3s)
+        {
+            var pipe = binding.Pipe;
+            if (pipe == null) return default;
+
+            if (!pipeRuntimeStateByPipe.TryGetValue(pipe, out var state))
+            {
+                state = new PipeRuntimeState
+                {
+                    StartCell = binding.StartCell,
+                    EndCell = binding.EndCell,
+                    Fill01 = Mathf.Clamp01(pipe.fillLevel / 100f)
+                };
+            }
+
+            double volume = binding.Volume_m3 > 0d ? binding.Volume_m3 : CalculatePipeVolume(pipe);
+            state.Volume_m3 = (float)volume;
+            state.StartCell = binding.StartCell;
+            state.EndCell = binding.EndCell;
+
+            double currentFill = Math.Min(1d, Math.Max(0d, state.Fill01));
+            double filledVolume = volume * currentFill;
+            double deltaVolume = flow_m3s * stepDuration;
+            double nextVolume = filledVolume + deltaVolume;
+
+            if (nextVolume < 0d) nextVolume = 0d;
+            if (nextVolume > volume) nextVolume = volume;
+
+            state.Fill01 = volume > 0d ? (float)(nextVolume / volume) : 0f;
+            state.Flow_m3s = (float)flow_m3s;
+            state.InletPressure_Pa = (float)inletPressure;
+            state.OutletPressure_Pa = (float)outletPressure;
+
+            pipeRuntimeStateByPipe[pipe] = state;
+            pipeRuntimeStateById[pipe.GetInstanceID()] = state;
+
+            return state;
         }
 
         private void AccumulatePortFlow(Vector2Int cell, float contribution)
@@ -698,6 +813,26 @@ namespace MachineRepair.Fluid
             return Math.Max(1e-3d, length);
         }
 
+        private double CalculatePipeVolume(PlacedPipe pipe)
+        {
+            double length = CalculatePipeLength(pipe);
+            double diameter = ResolvePipeDiameter(pipe);
+            double area = Math.PI * 0.25d * diameter * diameter;
+            double volume = area * length;
+            return Math.Max(0d, volume);
+        }
+
+        private double ResolvePipeDiameter(PlacedPipe pipe)
+        {
+            double diameter = DefaultDiameter_m;
+            if (pipe != null && pipe.pipeDef != null)
+            {
+                diameter = Math.Max(DefaultDiameter_m, pipe.pipeDef.innerDiameter_m);
+            }
+
+            return diameter;
+        }
+
         private double[] ConvertMinorLosses(float[] minorLosses)
         {
             var buffer = new double[minorLosses.Length];
@@ -733,6 +868,41 @@ namespace MachineRepair.Fluid
             }
 
             return pipes;
+        }
+
+        private void ResetPipeRuntimeSamples()
+        {
+            var keys = new List<PlacedPipe>(pipeRuntimeStateByPipe.Keys);
+            for (int i = 0; i < keys.Count; i++)
+            {
+                var key = keys[i];
+                var state = pipeRuntimeStateByPipe[key];
+                state.Flow_m3s = 0f;
+                state.InletPressure_Pa = 0f;
+                state.OutletPressure_Pa = 0f;
+                pipeRuntimeStateByPipe[key] = state;
+            }
+        }
+
+        private void PrunePipeRuntimeState(IEnumerable<PlacedPipe> activePipes)
+        {
+            if (activePipes == null) return;
+
+            var active = new HashSet<PlacedPipe>(activePipes);
+            var toRemove = new List<PlacedPipe>();
+
+            foreach (var kvp in pipeRuntimeStateByPipe)
+            {
+                if (kvp.Key == null || !active.Contains(kvp.Key))
+                {
+                    toRemove.Add(kvp.Key);
+                }
+            }
+
+            for (int i = 0; i < toRemove.Count; i++)
+            {
+                pipeRuntimeStateByPipe.Remove(toRemove[i]);
+            }
         }
 
         private static bool IsHydraulicSupply(MachineComponent component)

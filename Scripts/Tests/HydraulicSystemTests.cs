@@ -35,7 +35,7 @@ namespace MachineRepair.Tests
             var source = CreateWaterComponent(grid, new Vector2Int(0, 0), maxPressure: 200_000f);
             var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
 
-            _ = CreatePipeRun(grid, source, sink, new List<Vector2Int>
+            var pipe = CreatePipeRun(grid, source, sink, new List<Vector2Int>
             {
                 source.component.GetGlobalCell(source.port),
                 new Vector2Int(1, 0),
@@ -63,6 +63,10 @@ namespace MachineRepair.Tests
             Assert.That(sinkState.Pressure_Pa, Is.GreaterThan(0f), "Sink nodes should receive propagated pressure.");
             Assert.That(system.SourceByCell[sourceCell], Is.True);
             Assert.That(system.SourceByCell[sinkCell], Is.False);
+            Assert.That(system.PipeRuntimeStates.ContainsKey(pipe), "Pipe runtime state should be exposed.");
+            var runtimeState = system.PipeRuntimeStates[pipe];
+            Assert.That(runtimeState.Volume_m3, Is.GreaterThan(0f));
+            Assert.That(runtimeState.FillPercent, Is.GreaterThan(0f).And.LessThanOrEqualTo(100f));
 
             Vector2Int pipeCell = new Vector2Int(1, 0);
             Assert.That(system.PipeDeltaPByCell.ContainsKey(pipeCell), "Pipe ΔP should be recorded for occupied cells.");
@@ -88,6 +92,10 @@ namespace MachineRepair.Tests
             Assert.That(snapshotValue.HydraulicSources.ContainsKey(sourceCell) && snapshotValue.HydraulicSources[sourceCell]);
             Assert.That(snapshotValue.HydraulicSources.ContainsKey(sinkCell) && !snapshotValue.HydraulicSources[sinkCell]);
             Assert.That(snapshotValue.TryGetPipeDeltaP(pipeCell, out var snapshotDeltaP) && snapshotDeltaP > 0f, "Snapshot should surface pipe ΔP values.");
+            Assert.That(snapshotValue.PipeRuntimeStates != null && snapshotValue.PipeRuntimeStates.ContainsKey(pipe.GetInstanceID()), "Snapshot should surface pipe runtime state.");
+            var snapshotRuntime = snapshotValue.PipeRuntimeStates[pipe.GetInstanceID()];
+            Assert.That(snapshotRuntime.Volume_m3, Is.GreaterThan(0f));
+            Assert.That(snapshotRuntime.FillPercent, Is.GreaterThan(0f));
         }
 
         [Test]
@@ -107,6 +115,40 @@ namespace MachineRepair.Tests
             Assert.IsFalse(state.IsSource, "Non-supply nodes should not be flagged as sources.");
             Assert.That(state.SourcePressure_Pa, Is.EqualTo(0f), "Non-supply nodes should not expose a source pressure.");
             Assert.That(state.Pressure_Pa, Is.EqualTo(0f).Within(1e-5f), "Non-supply nodes should start at neutral pressure.");
+        }
+
+        [Test]
+        public void HydraulicSystem_PipeFillIntegratesOverSteps()
+        {
+            var grid = CreateTestGrid();
+            var source = CreateWaterComponent(grid, new Vector2Int(0, 0), maxPressure: 200_000f);
+            var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var pipeDef = CreatePipeDef(maxFlow: 1e-5f);
+
+            var pipe = CreatePipeRun(grid, source, sink, new List<Vector2Int>
+            {
+                source.component.GetGlobalCell(source.port),
+                new Vector2Int(1, 0),
+                sink.component.GetGlobalCell(sink.port)
+            }, pipeDef);
+
+            var system = new HydraulicSystem(grid);
+            system.SetWaterEnabled(true);
+            system.SetStepDuration(1f);
+
+            system.Solve();
+            var stateStepOne = system.PipeRuntimeStates[pipe];
+            Assert.That(stateStepOne.FillPercent, Is.GreaterThan(0f).And.LessThan(100f), "Pipe should begin filling but not instantly reach capacity.");
+
+            system.Solve();
+            var stateStepTwo = system.PipeRuntimeStates[pipe];
+            float expectedStepTwoFill = Mathf.Clamp(stateStepOne.FillPercent + stateStepTwo.Flow_m3s * 1f / stateStepTwo.Volume_m3 * 100f, 0f, 100f);
+            Assert.That(stateStepTwo.FillPercent, Is.EqualTo(expectedStepTwoFill).Within(0.001f), "Fill should integrate flow over the configured timestep.");
+            Assert.That(stateStepTwo.FillPercent, Is.GreaterThan(stateStepOne.FillPercent), "Fill should progress across simulation steps.");
+
+            system.Solve();
+            var stateStepThree = system.PipeRuntimeStates[pipe];
+            Assert.That(stateStepThree.FillPercent, Is.GreaterThan(stateStepTwo.FillPercent), "Fill should continue to increase over additional steps.");
         }
 
         [Test]
@@ -179,6 +221,50 @@ namespace MachineRepair.Tests
             float dualFlow = Mathf.Abs(dualSystem.PortStates[dualSourceCell].Flow_m3s);
             Assert.That(dualFlow, Is.GreaterThan(singleFlow), "Parallel pipes should increase available flow at the source node.");
             Assert.That(Mathf.Abs(dualSystem.PortStates[dualSinkCell].Flow_m3s), Is.GreaterThan(1e-6f), "Sink should still record flow when parallel pipes are present.");
+        }
+
+        [Test]
+        public void HydraulicSystem_PropagatesDownstreamPressureDrop()
+        {
+            var grid = CreateTestGrid();
+            var source = CreateWaterComponent(grid, new Vector2Int(0, 0), maxPressure: 300_000f);
+            var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var restrictivePipeDef = CreatePipeDef(maxFlow: 0.05f, diameter: 0.0025f);
+
+            var pipe = CreatePipeRun(grid, source, sink, new List<Vector2Int>
+            {
+                source.component.GetGlobalCell(source.port),
+                new Vector2Int(1, 0),
+                sink.component.GetGlobalCell(sink.port)
+            }, restrictivePipeDef);
+
+            var system = new HydraulicSystem(grid);
+            system.SetWaterEnabled(true);
+            system.SetStepDuration(0.25f);
+            system.Solve();
+
+            Assert.That(system.Edges, Is.Not.Empty, "Pipe edge should be registered.");
+            var edge = system.Edges[0];
+            Assert.That(Mathf.Abs((float)edge.Flow_m3s), Is.GreaterThan(0f), "Pipe should carry flow.");
+            Assert.That(Mathf.Abs((float)edge.LastDeltaP_Pa), Is.GreaterThan(0f), "Pipe should record a pressure drop.");
+
+            Assert.NotNull(edge.Tag, "Edge tag should carry pipe binding data.");
+            var tagType = edge.Tag.GetType();
+            var startCellField = tagType.GetField("StartCell", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+            var endCellField = tagType.GetField("EndCell", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+            Assert.NotNull(startCellField);
+            Assert.NotNull(endCellField);
+            var startCell = (Vector2Int)startCellField.GetValue(edge.Tag);
+            var endCell = (Vector2Int)endCellField.GetValue(edge.Tag);
+
+            bool forward = edge.Flow_m3s >= 0d;
+            var upstreamCell = forward ? startCell : endCell;
+            var downstreamCell = forward ? endCell : startCell;
+
+            var upstreamState = system.PortStates[upstreamCell];
+            var downstreamState = system.PortStates[downstreamCell];
+            float expectedDownstreamPressure = Mathf.Max(0f, upstreamState.Pressure_Pa - Mathf.Abs((float)edge.LastDeltaP_Pa));
+            Assert.That(downstreamState.Pressure_Pa, Is.EqualTo(expectedDownstreamPressure).Within(5f), "Downstream port pressure should reflect edge ΔP.");
         }
 
         private GridManager CreateTestGrid()
@@ -284,7 +370,9 @@ namespace MachineRepair.Tests
             GridManager grid,
             (MachineComponent component, PortLocal port) start,
             (MachineComponent component, PortLocal port) end,
-            List<Vector2Int> occupiedCells)
+            List<Vector2Int> occupiedCells,
+            PipeDef pipeDef = null,
+            float? flowrateMaxOverride = null)
         {
             var go = new GameObject("Pipe");
             createdObjects.Add(go);
@@ -295,7 +383,8 @@ namespace MachineRepair.Tests
             pipe.startPortCell = start.component.GetGlobalCell(start.port);
             pipe.endPortCell = end.component.GetGlobalCell(end.port);
             pipe.occupiedCells = occupiedCells;
-            pipe.flowrateMax = 1f;
+            pipe.pipeDef = pipeDef;
+            pipe.flowrateMax = flowrateMaxOverride ?? pipeDef?.maxFlow ?? 1f;
 
             var occupancy = GetOccupancy(grid);
             for (int i = 0; i < occupiedCells.Count; i++)
@@ -307,6 +396,15 @@ namespace MachineRepair.Tests
             }
 
             return pipe;
+        }
+
+        private PipeDef CreatePipeDef(float maxFlow, float diameter = 0.01f)
+        {
+            var def = ScriptableObject.CreateInstance<PipeDef>();
+            createdObjects.Add(def);
+            def.maxFlow = maxFlow;
+            def.innerDiameter_m = diameter;
+            return def;
         }
 
         private static CellOccupancy[] GetOccupancy(GridManager grid)
