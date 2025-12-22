@@ -19,6 +19,8 @@ namespace MachineRepair.Flavor
         [Tooltip("ChatBubbleContainer RectTransform under the front-view UI; falls back to the nearest Canvas if null.")]
         public RectTransform bubbleParent;
         [Min(1f)] public float bubbleLifetime = 6f;
+        [SerializeField, Min(0f), Tooltip("Fallback delay for flavor line segments when no per-line value is supplied.")] private float defaultSegmentDelaySeconds = 1.5f;
+        [SerializeField, Min(0f), Tooltip("Extra time appended after the final segment before fading out.")] private float segmentTailPaddingSeconds = 0.5f;
 
         [Header("Portrait Spawn")]
         [Tooltip("Prefab with a SpriteRenderer used to show the speaking customer's portrait in world space.")]
@@ -158,7 +160,13 @@ namespace MachineRepair.Flavor
             if (candidates.Count == 0)
             {
                 if (forced)
-                    SpawnBubble("[debug] Forced emit: no candidates matched.", _lastSpeaker);
+                {
+                    var debugSegments = new List<ChatBubbleSegment>
+                    {
+                        new ChatBubbleSegment("[debug] Forced emit: no candidates matched.", 0f)
+                    };
+                    SpawnBubble(debugSegments, 0f, bubbleLifetime, _lastSpeaker);
+                }
                 return;
             }
 
@@ -170,14 +178,22 @@ namespace MachineRepair.Flavor
                 return;
             }
 
-            string text = FillTemplate(chosen.template, ctx);
-            SpawnBubble(text, chosenSpeaker);
+            float defaultDelay = ResolveDefaultDelay(chosen);
+            bool usedAuthoredSegments;
+            var segments = BuildSegments(chosen, ctx, defaultDelay, out usedAuthoredSegments);
+            float lifetime = ComputeLifetime(segments, usedAuthoredSegments);
+            float playbackDefaultDelay = usedAuthoredSegments ? defaultDelay : 0f;
+            SpawnBubble(segments, playbackDefaultDelay, lifetime, chosenSpeaker);
 
             _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
             if (chosen.oncePerSession) _shownThisSession.Add(chosen);
             _lastSpeaker = chosenSpeaker;
 
-            if (verbose) Debug.Log($"[FlavorChatService] Emitted: {text}");
+            if (verbose)
+            {
+                string preview = (segments != null && segments.Count > 0) ? segments[0].Text : "<no text>";
+                Debug.Log($"[FlavorChatService] Emitted: {preview} (segments={segments?.Count ?? 0}, lifetime={lifetime:0.00}s)");
+            }
         }
 
         // ----------------- Helpers defined in THIS CLASS -----------------
@@ -204,7 +220,66 @@ namespace MachineRepair.Flavor
             return s;
         }
 
-        void SpawnBubble(string text, CustomerInstance speaker = null)
+        List<ChatBubbleSegment> BuildSegments(FlavorLine line, FlavorContext ctx, float defaultDelaySeconds, out bool usedAuthoredSegments)
+        {
+            var segments = new List<ChatBubbleSegment>();
+            usedAuthoredSegments = line != null && line.segments != null && line.segments.Count > 0;
+
+            if (usedAuthoredSegments)
+            {
+                foreach (var segment in line.segments)
+                {
+                    if (segment == null) continue;
+
+                    string text = FillTemplate(segment.text, ctx);
+                    float delay = ResolveDelay(segment.delaySeconds, defaultDelaySeconds);
+                    segments.Add(new ChatBubbleSegment(text, delay));
+                }
+            }
+
+            if (segments.Count == 0)
+            {
+                string text = FillTemplate(line.template, ctx);
+                segments.Add(new ChatBubbleSegment(text, 0f));
+                usedAuthoredSegments = false;
+            }
+
+            return segments;
+        }
+
+        float ComputeLifetime(IReadOnlyList<ChatBubbleSegment> segments, bool usedAuthoredSegments)
+        {
+            if (!usedAuthoredSegments || segments == null || segments.Count == 0)
+            {
+                return Mathf.Max(0f, bubbleLifetime);
+            }
+
+            float total = 0f;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                total += ResolveDelay(segments[i].DelaySeconds, defaultSegmentDelaySeconds);
+            }
+
+            // Allow the final line to hang briefly before fading.
+            float lifetime = total + segmentTailPaddingSeconds;
+            return Mathf.Max(0.01f, lifetime);
+        }
+
+        float ResolveDefaultDelay(FlavorLine line)
+        {
+            if (line != null && line.defaultSegmentDelaySeconds > 0f)
+                return line.defaultSegmentDelaySeconds;
+            return defaultSegmentDelaySeconds;
+        }
+
+        float ResolveDelay(float segmentDelay, float defaultDelay)
+        {
+            if (segmentDelay > 0f) return segmentDelay;
+            if (defaultDelay > 0f) return defaultDelay;
+            return defaultSegmentDelaySeconds;
+        }
+
+        void SpawnBubble(IReadOnlyList<ChatBubbleSegment> segments, float defaultDelaySeconds, float lifetimeSeconds, CustomerInstance speaker = null)
         {
             if (bubblePrefab == null)
             {
@@ -239,11 +314,10 @@ namespace MachineRepair.Flavor
                 return;
             }
 
-            ui.SetText(text);
             ui.SetPortrait(null); // portrait now lives in world space
-            ui.Play(bubbleLifetime);
+            ui.PlaySequence(segments, defaultDelaySeconds, Mathf.Max(0f, lifetimeSeconds));
 
-            SpawnWorldPortrait(speaker?.Portrait, bubbleLifetime);
+            SpawnWorldPortrait(speaker?.Portrait, Mathf.Max(0f, lifetimeSeconds));
         }
 
         CustomerInstance PickCustomer(List<(FlavorLine line, int weight)> candidates)
