@@ -11,6 +11,9 @@ namespace MachineRepair.Flavor
         [Header("Authoring")]
         public FlavorBank bank;
 
+        [Header("Customers")]
+        [Tooltip("Authored customer pool that will be selected when emitting lines. If empty, portraitProfiles will seed defaults at runtime.")]
+        public List<CustomerInstance> customers = new();
         [Header("UI Spawn")]
         public ChatBubbleUI bubblePrefab;
         [Tooltip("ChatBubbleContainer RectTransform under the front-view UI; falls back to the nearest Canvas if null.")]
@@ -23,6 +26,7 @@ namespace MachineRepair.Flavor
         [SerializeField] private Vector2 portraitOffsetFromSubGrid = new Vector2(0.5f, 0.5f);
 
         [Header("Customer Visuals")]
+        [Tooltip("Legacy portrait definitions; used to seed customers when the dedicated list is empty.")]
         public List<CustomerPortraitProfile> portraitProfiles = new();
         public CameraGridFocusController cameraFocusController;
 
@@ -41,12 +45,15 @@ namespace MachineRepair.Flavor
         private readonly HashSet<FlavorLine> _shownThisSession = new();
         private Coroutine _loop;
         private RectTransform _resolvedParent;
+        private CustomerInstance _lastSpeaker;
 
         void Awake()
         {
             contextSource = contextSourceBehaviour as IFlavorContextSource;
             if (verbose && contextSource == null)
                 Debug.LogWarning("[FlavorChatService] contextSourceBehaviour is null or does not implement IFlavorContextSource.");
+
+            EnsureCustomers();
         }
 
         void OnEnable()
@@ -115,6 +122,7 @@ namespace MachineRepair.Flavor
 
             var candidates = new List<(FlavorLine line, int weight)>();
             int skippedCooldown = 0, skippedMode = 0, skippedReqs = 0;
+            EnsureCustomers();
 
             foreach (var line in bank.lines)
             {
@@ -150,20 +158,12 @@ namespace MachineRepair.Flavor
             if (candidates.Count == 0)
             {
                 if (forced)
-                    SpawnBubble("[debug] Forced emit: no candidates matched.", PickCustomerSprite(null));
+                    SpawnBubble("[debug] Forced emit: no candidates matched.", _lastSpeaker);
                 return;
             }
 
-            // Weighted pick
-            int sum = 0;
-            foreach (var c in candidates) sum += c.weight;
-            int pick = Random.Range(0, sum);
-            FlavorLine chosen = null;
-            foreach (var c in candidates)
-            {
-                if (pick < c.weight) { chosen = c.line; break; }
-                pick -= c.weight;
-            }
+            var chosenSpeaker = PickCustomer(candidates);
+            FlavorLine chosen = PickLineForCustomer(candidates, chosenSpeaker);
             if (chosen == null)
             {
                 if (verbose) Debug.LogWarning("[FlavorChatService] Weighted pick failed.");
@@ -171,10 +171,11 @@ namespace MachineRepair.Flavor
             }
 
             string text = FillTemplate(chosen.template, ctx);
-            SpawnBubble(text, PickCustomerSprite(chosen));
+            SpawnBubble(text, chosenSpeaker);
 
             _nextAllowed[chosen] = now + chosen.minCooldownSeconds;
             if (chosen.oncePerSession) _shownThisSession.Add(chosen);
+            _lastSpeaker = chosenSpeaker;
 
             if (verbose) Debug.Log($"[FlavorChatService] Emitted: {text}");
         }
@@ -203,7 +204,7 @@ namespace MachineRepair.Flavor
             return s;
         }
 
-        void SpawnBubble(string text, Sprite portrait = null)
+        void SpawnBubble(string text, CustomerInstance speaker = null)
         {
             if (bubblePrefab == null)
             {
@@ -242,59 +243,30 @@ namespace MachineRepair.Flavor
             ui.SetPortrait(null); // portrait now lives in world space
             ui.Play(bubbleLifetime);
 
-            SpawnWorldPortrait(portrait, bubbleLifetime);
+            SpawnWorldPortrait(speaker?.Portrait, bubbleLifetime);
         }
 
-        Sprite PickCustomerSprite(FlavorLine chosenLine)
+        CustomerInstance PickCustomer(List<(FlavorLine line, int weight)> candidates)
         {
-            if (portraitProfiles == null || portraitProfiles.Count == 0)
+            if (customers == null || customers.Count == 0)
                 return null;
 
-            if (cameraFocusController == null)
-                return null;
-
-            var matches = new List<(CustomerPortraitProfile profile, int weight)>();
-            var generalProfiles = new List<(CustomerPortraitProfile profile, int weight)>();
-
-            foreach (var profile in portraitProfiles)
+            var pool = new List<(CustomerInstance customer, int weight)>();
+            foreach (var customer in customers)
             {
-                if (profile == null || profile.sprite == null || profile.tags == null)
-                    continue;
+                if (customer == null) continue;
 
-                int overlapWeight = 0;
-                int generalWeight = 0;
-
-                foreach (var tagWeight in profile.tags)
+                int overlap = 0;
+                foreach (var candidate in candidates)
                 {
-                    if (tagWeight == null) continue;
-
-                    if (tagWeight.tag == FlavorContextTag.General)
-                    {
-                        generalWeight += Mathf.Max(1, tagWeight.weight);
-                    }
-
-                    if (chosenLine?.tags == null) continue;
-
-                    foreach (var lineTag in chosenLine.tags)
-                    {
-                        if (lineTag == null) continue;
-                        if (lineTag.tag != tagWeight.tag) continue;
-
-                        overlapWeight += Mathf.Max(1, lineTag.weight) * Mathf.Max(1, tagWeight.weight);
-                    }
+                    overlap += ScoreTagOverlap(customer, candidate.line);
                 }
 
-                if (overlapWeight > 0)
-                {
-                    matches.Add((profile, overlapWeight));
-                }
-                else if (generalWeight > 0)
-                {
-                    generalProfiles.Add((profile, generalWeight));
-                }
+                int moodWeight = Mathf.Max(1, Mathf.RoundToInt(1f + customer.MoodFactor));
+                int finalWeight = Mathf.Max(1, overlap + 1) * moodWeight;
+                pool.Add((customer, finalWeight));
             }
 
-            var pool = matches.Count > 0 ? matches : generalProfiles;
             if (pool.Count == 0)
                 return null;
 
@@ -305,11 +277,106 @@ namespace MachineRepair.Flavor
             foreach (var entry in pool)
             {
                 if (pick < entry.weight)
-                    return entry.profile.sprite;
+                    return entry.customer;
                 pick -= entry.weight;
             }
 
-            return pool[0].profile.sprite; // fallback
+            return pool[0].customer; // fallback
+        }
+
+        FlavorLine PickLineForCustomer(List<(FlavorLine line, int weight)> candidates, CustomerInstance speaker)
+        {
+            if (candidates == null || candidates.Count == 0) return null;
+
+            var weighted = new List<(FlavorLine line, int weight)>();
+            int sum = 0;
+            foreach (var c in candidates)
+            {
+                int adjusted = c.weight;
+                if (speaker != null)
+                {
+                    int tagScore = ScoreTagOverlap(speaker, c.line);
+                    float moodFactor = speaker.MoodFactor;
+                    adjusted = Mathf.Max(1, Mathf.RoundToInt(adjusted * (1f + 0.5f * tagScore) * moodFactor));
+                }
+                weighted.Add((c.line, adjusted));
+                sum += adjusted;
+            }
+
+            int pick = Random.Range(0, sum);
+            foreach (var c in weighted)
+            {
+                if (pick < c.weight) return c.line;
+                pick -= c.weight;
+            }
+
+            return weighted[0].line;
+        }
+
+        int ScoreTagOverlap(CustomerInstance customer, FlavorLine line)
+        {
+            if (customer == null || line == null || line.tags == null) return 0;
+
+            int score = 0;
+            foreach (var t in line.tags)
+            {
+                if (t == null) continue;
+                if (customer.HasTag(t.tag))
+                    score += Mathf.Max(1, t.weight);
+            }
+            return score;
+        }
+
+        void EnsureCustomers()
+        {
+            if (customers == null)
+                customers = new List<CustomerInstance>();
+
+            if (customers.Count == 0 && portraitProfiles != null && portraitProfiles.Count > 0)
+            {
+                foreach (var profile in portraitProfiles)
+                {
+                    if (profile == null || profile.sprite == null) continue;
+                    var tags = profile.tags?.Where(t => t != null).Select(t => t.tag) ?? Enumerable.Empty<FlavorContextTag>();
+                    var instance = new CustomerInstance();
+                    instance.SetPortrait(profile.sprite);
+                    instance.SetTags(tags);
+                    instance.SetMood(70);
+                    customers.Add(instance);
+                }
+            }
+
+            foreach (var customer in customers)
+            {
+                customer?.ClampMood();
+            }
+        }
+
+        public CustomerInstance GetLastSpeaker() => _lastSpeaker;
+
+        public void AdjustMoodForTags(IEnumerable<FlavorContextTag> tags, int delta)
+        {
+            if (customers == null || tags == null) return;
+            var tagSet = new HashSet<FlavorContextTag>(tags);
+            foreach (var customer in customers)
+            {
+                if (customer == null) continue;
+                if (customer.Tags.Any(tagSet.Contains))
+                    customer.AdjustMood(delta);
+            }
+        }
+
+        public void AdjustMoodForCustomer(CustomerInstance customer, int delta)
+        {
+            if (customer == null || customers == null) return;
+            if (!customers.Contains(customer)) return;
+            customer.AdjustMood(delta);
+        }
+
+        public void AdjustMoodForLastSpeaker(int delta)
+        {
+            if (_lastSpeaker == null) return;
+            AdjustMoodForCustomer(_lastSpeaker, delta);
         }
 
         RectTransform ResolveBubbleParent()
