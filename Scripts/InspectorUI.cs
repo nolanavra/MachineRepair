@@ -168,10 +168,13 @@ public class InspectorUI : MonoBehaviour
 
     private void PresentPipe(InputRouter.SelectionInfo selection)
     {
-        SetTitle("Pipe");
+        var pipe = selection.cellData.GetPipeAt(selection.pipeIndex);
+        string displayName = pipe?.pipeDef?.displayName ?? pipe?.name ?? "Pipe";
+
+        SetTitle(displayName);
         SetDescription("Transports water between connected components.");
         SetConnections(BuildConnectionSummary(selection.cell));
-        SetParameters("No simulation parameters for pipes.");
+        SetParameters(BuildPipeParameters(selection, pipe));
         PresentSwitchSection(null);
     }
 
@@ -481,6 +484,68 @@ public class InspectorUI : MonoBehaviour
         string kind = wire.wireDef.wireType == WireType.Signal ? "Signal" : "Power";
         sb.AppendLine($"- Kind: {kind}");
         sb.AppendLine($"- Max Current: {wire.wireDef.maxCurrent} A");
+
+        return sb.ToString();
+    }
+
+    private string BuildPipeParameters(InputRouter.SelectionInfo selection, PlacedPipe pipe)
+    {
+        if (pipe == null)
+        {
+            return "No simulation parameters for pipes.";
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Pipe Parameters:");
+
+        var def = pipe.pipeDef;
+        if (def != null)
+        {
+            sb.AppendLine($"- Max Flow: {def.maxFlow:0.###} m³/s");
+            sb.AppendLine($"- Max Pressure: {def.maxPressure:0.###} Pa");
+            sb.AppendLine($"- Inner Diameter: {def.innerDiameter_m:0.###} m");
+        }
+
+        int runCells = pipe.occupiedCells != null ? pipe.occupiedCells.Count : 0;
+        if (runCells > 0)
+        {
+            sb.AppendLine($"- Run Length: {runCells} cell{(runCells == 1 ? string.Empty : "s")}");
+        }
+
+        bool hasSnapshot = simulationManager != null && simulationManager.LastSnapshot.HasValue;
+        if (!hasSnapshot)
+        {
+            sb.AppendLine("- Runtime data unavailable (no simulation snapshot).");
+            return sb.ToString();
+        }
+
+        var snapshot = simulationManager.LastSnapshot.Value;
+        if (!snapshot.TryGetPipeRuntimeState(pipe.GetInstanceID(), out var runtimeState))
+        {
+            sb.AppendLine("- Runtime data unavailable (pipe not present in snapshot).");
+            return sb.ToString();
+        }
+
+        sb.AppendLine($"- Flow: {runtimeState.Flow_m3s:0.###} m³/s");
+        sb.AppendLine($"- Fill: {runtimeState.FillPercent:0.###}%");
+        sb.AppendLine($"- Inlet Pressure: {runtimeState.InletPressure_Pa:0.###} Pa");
+        sb.AppendLine($"- Outlet Pressure: {runtimeState.OutletPressure_Pa:0.###} Pa");
+        sb.AppendLine($"- Volume: {runtimeState.Volume_m3:0.###} m³");
+
+        Vector2Int? sampleCell = null;
+        if (pipe.occupiedCells != null && pipe.occupiedCells.Count > 0)
+        {
+            sampleCell = pipe.occupiedCells[0];
+        }
+        else if (selection.hasSelection)
+        {
+            sampleCell = selection.cell;
+        }
+
+        if (sampleCell.HasValue && snapshot.TryGetPipeDeltaP(sampleCell.Value, out var deltaP))
+        {
+            sb.AppendLine($"- Pressure Drop: {deltaP:0.###} Pa");
+        }
 
         return sb.ToString();
     }
