@@ -49,6 +49,7 @@ namespace MachineRepair.Flavor
         private IFlavorContextSource contextSource;
         private readonly Dictionary<FlavorLine, double> _nextAllowed = new();
         private readonly HashSet<FlavorLine> _shownThisSession = new();
+        private readonly Dictionary<CustomerInstance, HashSet<string>> _customerHistory = new();
         private Coroutine _loop;
         private RectTransform _resolvedParent;
         private CustomerInstance _lastSpeaker;
@@ -143,6 +144,7 @@ namespace MachineRepair.Flavor
             var candidates = new List<(FlavorLine line, int weight)>();
             int skippedCooldown = 0, skippedMode = 0, skippedReqs = 0;
             EnsureCustomers();
+            SyncCustomerHistory();
 
             foreach (var line in bank.lines)
             {
@@ -189,7 +191,14 @@ namespace MachineRepair.Flavor
             }
 
             var chosenSpeaker = PickCustomer(candidates);
-            FlavorLine chosen = PickLineForCustomer(candidates, chosenSpeaker);
+            var filteredForSpeaker = FilterCandidatesForSpeaker(candidates, chosenSpeaker, ctx);
+            if (filteredForSpeaker.Count == 0)
+            {
+                chosenSpeaker = FindSpeakerWithFreshLine(candidates, ctx);
+                filteredForSpeaker = FilterCandidatesForSpeaker(candidates, chosenSpeaker, ctx);
+            }
+
+            FlavorLine chosen = PickLineForCustomer(filteredForSpeaker, chosenSpeaker, ctx);
             if (chosen == null)
             {
                 if (verbose) Debug.LogWarning("[FlavorChatService] Weighted pick failed.");
@@ -225,6 +234,8 @@ namespace MachineRepair.Flavor
                 string preview = (segments != null && segments.Count > 0) ? segments[0].Text : "<no text>";
                 Debug.Log($"[FlavorChatService] Emitted: {preview} (segments={segments?.Count ?? 0}, lifetime={lifetime:0.00}s)");
             }
+
+            RecordSegmentsForCustomer(speaker, segments);
 
             HandleResponses(line, speaker, ctx, bubble);
             return true;
@@ -557,7 +568,41 @@ namespace MachineRepair.Flavor
             return pool[0].customer; // fallback
         }
 
-        FlavorLine PickLineForCustomer(List<(FlavorLine line, int weight)> candidates, CustomerInstance speaker)
+        List<(FlavorLine line, int weight)> FilterCandidatesForSpeaker(List<(FlavorLine line, int weight)> candidates, CustomerInstance speaker, FlavorContext ctx)
+        {
+            if (candidates == null || candidates.Count == 0)
+                return new List<(FlavorLine line, int weight)>();
+
+            if (speaker == null)
+                return new List<(FlavorLine line, int weight)>(candidates);
+
+            var filtered = new List<(FlavorLine line, int weight)>();
+            foreach (var c in candidates)
+            {
+                if (c.line == null) continue;
+                if (HasCustomerSeenLine(speaker, c.line, ctx)) continue;
+                filtered.Add(c);
+            }
+
+            return filtered;
+        }
+
+        CustomerInstance FindSpeakerWithFreshLine(List<(FlavorLine line, int weight)> candidates, FlavorContext ctx)
+        {
+            if (customers == null)
+                return null;
+
+            foreach (var customer in customers)
+            {
+                if (customer == null) continue;
+                if (FilterCandidatesForSpeaker(candidates, customer, ctx).Count > 0)
+                    return customer;
+            }
+
+            return null;
+        }
+
+        FlavorLine PickLineForCustomer(List<(FlavorLine line, int weight)> candidates, CustomerInstance speaker, FlavorContext ctx)
         {
             if (candidates == null || candidates.Count == 0) return null;
 
@@ -565,6 +610,9 @@ namespace MachineRepair.Flavor
             int sum = 0;
             foreach (var c in candidates)
             {
+                if (speaker != null && HasCustomerSeenLine(speaker, c.line, ctx))
+                    continue;
+
                 int adjusted = c.weight;
                 if (speaker != null)
                 {
@@ -625,6 +673,36 @@ namespace MachineRepair.Flavor
             }
         }
 
+        void SyncCustomerHistory()
+        {
+            if (customers == null || customers.Count == 0)
+            {
+                _customerHistory.Clear();
+                return;
+            }
+
+            var valid = new HashSet<CustomerInstance>(customers.Where(c => c != null));
+
+            var stale = new List<CustomerInstance>();
+            foreach (var kvp in _customerHistory)
+            {
+                if (!valid.Contains(kvp.Key))
+                    stale.Add(kvp.Key);
+            }
+            foreach (var removed in stale)
+            {
+                _customerHistory.Remove(removed);
+            }
+
+            foreach (var customer in valid)
+            {
+                if (!_customerHistory.ContainsKey(customer))
+                {
+                    _customerHistory[customer] = new HashSet<string>();
+                }
+            }
+        }
+
         public CustomerInstance GetLastSpeaker() => _lastSpeaker;
 
         public void AdjustMoodForTags(IEnumerable<FlavorContextTag> tags, int delta)
@@ -650,6 +728,61 @@ namespace MachineRepair.Flavor
         {
             if (_lastSpeaker == null) return;
             AdjustMoodForCustomer(_lastSpeaker, delta);
+        }
+
+        bool HasCustomerSeenLine(CustomerInstance customer, FlavorLine line, FlavorContext ctx)
+        {
+            if (customer == null || line == null)
+                return false;
+
+            var history = GetOrCreateHistory(customer);
+            var segmentTexts = BuildSegmentTexts(line, ctx);
+            if (segmentTexts.Count == 0)
+                return false;
+
+            foreach (var text in segmentTexts)
+            {
+                if (history.Contains(text))
+                    return true;
+            }
+
+            return false;
+        }
+
+        List<string> BuildSegmentTexts(FlavorLine line, FlavorContext ctx)
+        {
+            float defaultDelay = ResolveDefaultDelay(line);
+            bool usedAuthored;
+            var segments = BuildSegments(line, ctx, defaultDelay, out usedAuthored);
+            var texts = new List<string>(segments.Count);
+            foreach (var segment in segments)
+            {
+                texts.Add(segment.Text ?? string.Empty);
+            }
+
+            return texts;
+        }
+
+        HashSet<string> GetOrCreateHistory(CustomerInstance customer)
+        {
+            if (!_customerHistory.TryGetValue(customer, out var history) || history == null)
+            {
+                history = new HashSet<string>();
+                _customerHistory[customer] = history;
+            }
+            return history;
+        }
+
+        void RecordSegmentsForCustomer(CustomerInstance customer, IReadOnlyList<ChatBubbleSegment> segments)
+        {
+            if (customer == null || segments == null || segments.Count == 0)
+                return;
+
+            var history = GetOrCreateHistory(customer);
+            foreach (var segment in segments)
+            {
+                history.Add(segment.Text ?? string.Empty);
+            }
         }
 
         RectTransform ResolveBubbleParent()
