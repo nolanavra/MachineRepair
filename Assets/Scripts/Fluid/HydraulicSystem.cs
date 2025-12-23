@@ -30,6 +30,7 @@ namespace MachineRepair.Fluid
             public float Flow_m3s;
             public float InletPressure_Pa;
             public float OutletPressure_Pa;
+            public float PressureDelta_Pa;
 
             public float FillPercent => Fill01 * 100f;
         }
@@ -67,6 +68,7 @@ namespace MachineRepair.Fluid
             public double HydraulicLength_m;
             public double HydraulicArea_m2;
             public double Volume_m3;
+            public double PressureDelta_Pa;
         }
 
         private readonly GridManager grid;
@@ -667,13 +669,16 @@ namespace MachineRepair.Fluid
             double inletPressure = Math.Max(0d, inletNode.Pressure_Pa);
             double directionalDeltaP = forward ? edge.LastDeltaP_Pa : -edge.LastDeltaP_Pa;
             double outletPressure = Math.Max(0d, inletPressure - Math.Abs(directionalDeltaP));
+            double pressureDelta = Math.Max(0d, inletPressure - outletPressure);
 
             UpdatePortPressure(inletCell, (float)inletPressure);
             UpdatePortPressure(outletCell, (float)outletPressure);
 
             if (binding.Pipe == null) return;
 
-            var state = GetOrCreatePipeRuntimeState(binding, inletPressure, outletPressure, flow);
+            binding.PressureDelta_Pa = pressureDelta;
+
+            var state = GetOrCreatePipeRuntimeState(binding, inletPressure, outletPressure, pressureDelta, flow);
             binding.Pipe.flow = (float)flow;
             binding.Pipe.fillLevel = state.FillPercent;
             binding.Pipe.pressure = Mathf.Max(state.InletPressure_Pa, state.OutletPressure_Pa);
@@ -698,6 +703,7 @@ namespace MachineRepair.Fluid
             HydraulicEdgeBinding binding,
             double inletPressure,
             double outletPressure,
+            double pressureDelta,
             double flow_m3s)
         {
             var pipe = binding.Pipe;
@@ -735,6 +741,7 @@ namespace MachineRepair.Fluid
             state.Flow_m3s = (float)flow_m3s;
             state.InletPressure_Pa = (float)inletPressure;
             state.OutletPressure_Pa = (float)outletPressure;
+            state.PressureDelta_Pa = (float)pressureDelta;
 
             pipeRuntimeStateByPipe[pipe] = state;
             pipeRuntimeStateById[pipe.GetInstanceID()] = state;
@@ -1067,6 +1074,7 @@ namespace MachineRepair.Fluid
                 state.Flow_m3s = 0f;
                 state.InletPressure_Pa = 0f;
                 state.OutletPressure_Pa = 0f;
+                state.PressureDelta_Pa = 0f;
                 pipeRuntimeStateByPipe[key] = state;
             }
         }
