@@ -253,6 +253,7 @@ public class InspectorUI : MonoBehaviour
         bool powered = false;
         float flowIn = 0f;
         float fillPercent = 0f;
+        bool flowAvailable = false;
 
         Vector2Int targetCell = component != null ? component.anchorCell : selection.cell;
         bool cellValid = grid != null && grid.InBounds(targetCell.x, targetCell.y);
@@ -265,10 +266,6 @@ public class InspectorUI : MonoBehaviour
                 powered = simulationManager.PowerOn && snapshot.Voltage[idx] > 0.01f;
             }
 
-            if (snapshot.Flow != null && idx >= 0 && idx < snapshot.Flow.Length)
-            {
-                flowIn = simulationManager.WaterOn ? snapshot.Flow[idx] : 0f;
-            }
         }
         else if (!cellValid)
         {
@@ -279,13 +276,26 @@ public class InspectorUI : MonoBehaviour
             sb.AppendLine("- Simulation snapshot unavailable.");
         }
 
+        if (def != null && def.water && TryResolveWaterPortCell(component, selection.cell, out var portCell))
+        {
+            if (hasSnapshot && snapshot.TryGetPortHydraulicState(portCell, out var portState))
+            {
+                flowIn = simulationManager.WaterOn ? portState.Flow_m3s : 0f;
+                flowAvailable = true;
+            }
+            else if (hasSnapshot)
+            {
+                sb.AppendLine("- Hydraulic data unavailable for the selected water port.");
+            }
+        }
+
         if (def.water)
         {
             fillPercent = ResolveComponentFillPercent(component, def, snapshot, hasSnapshot);
         }
 
         sb.AppendLine($"- Powered: {powered}");
-        sb.AppendLine($"- Water Flow In: {flowIn:F2}");
+        sb.AppendLine(flowAvailable ? $"- Water Flow In: {flowIn:F2}" : "- Water Flow In: 0.00");
 
         if (def.water)
         {
@@ -302,6 +312,49 @@ public class InspectorUI : MonoBehaviour
         AppendWaterPortHydraulicStates(sb, component, snapshot, hasSnapshot);
 
         return sb.ToString();
+    }
+
+    private static bool TryResolveWaterPortCell(
+        MachineComponent component,
+        Vector2Int selectionCell,
+        out Vector2Int portCell)
+    {
+        portCell = default;
+
+        if (component?.portDef?.ports == null || component.portDef.ports.Length == 0)
+        {
+            return false;
+        }
+
+        Vector2Int? fallback = null;
+        for (int i = 0; i < component.portDef.ports.Length; i++)
+        {
+            var port = component.portDef.ports[i];
+            if (port.portType != PortType.Water)
+            {
+                continue;
+            }
+
+            var globalPortCell = component.GetGlobalCell(port);
+            if (globalPortCell == selectionCell)
+            {
+                portCell = globalPortCell;
+                return true;
+            }
+
+            if (!fallback.HasValue)
+            {
+                fallback = globalPortCell;
+            }
+        }
+
+        if (fallback.HasValue)
+        {
+            portCell = fallback.Value;
+            return true;
+        }
+
+        return false;
     }
 
     private float ResolveComponentFillPercent(
