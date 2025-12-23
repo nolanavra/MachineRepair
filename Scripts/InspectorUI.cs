@@ -251,9 +251,7 @@ public class InspectorUI : MonoBehaviour
 
         bool powered = false;
         float flowIn = 0f;
-        float pressure = 0f;
-        float maxPortPressure = 0f;
-        float maxPortSourcePressure = 0f;
+        float fillPercent = 0f;
 
         Vector2Int targetCell = component != null ? component.anchorCell : selection.cell;
         bool cellValid = grid != null && grid.InBounds(targetCell.x, targetCell.y);
@@ -270,11 +268,6 @@ public class InspectorUI : MonoBehaviour
             {
                 flowIn = simulationManager.WaterOn ? snapshot.Flow[idx] : 0f;
             }
-
-            if (snapshot.Pressure != null && idx >= 0 && idx < snapshot.Pressure.Length)
-            {
-                pressure = simulationManager.WaterOn ? snapshot.Pressure[idx] : 0f;
-            }
         }
         else if (!cellValid)
         {
@@ -285,21 +278,23 @@ public class InspectorUI : MonoBehaviour
             sb.AppendLine("- Simulation snapshot unavailable.");
         }
 
-        CollectWaterPortPressures(component, snapshot, hasSnapshot, out maxPortPressure, out maxPortSourcePressure);
+        if (def.water)
+        {
+            fillPercent = ResolveComponentFillPercent(component, def, snapshot, hasSnapshot);
+        }
 
         sb.AppendLine($"- Powered: {powered}");
         sb.AppendLine($"- Water Flow In: {flowIn:F2}");
 
+        if (def.water)
+        {
+            sb.AppendLine($"- Fill: {fillPercent:F1}%");
+        }
+
         if (def.componentType == ComponentType.Boiler)
         {
-            float observedPressure = maxPortPressure > 0f ? maxPortPressure : pressure;
-            float referencePressure = maxPortSourcePressure > 0f ? maxPortSourcePressure : observedPressure;
-            float fillPercent = referencePressure > 0f
-                ? Mathf.Clamp01(observedPressure / referencePressure) * 100f
-                : 0f;
             float temperature = powered ? Mathf.Max(def.targetTempMin, def.temperatureC) : def.temperatureC;
 
-            sb.AppendLine($"- Fill: {fillPercent:F0}%");
             sb.AppendLine($"- Temperature: {temperature:F1} °C");
         }
 
@@ -308,40 +303,31 @@ public class InspectorUI : MonoBehaviour
         return sb.ToString();
     }
 
-    private static void CollectWaterPortPressures(
+    private float ResolveComponentFillPercent(
         MachineComponent component,
+        ThingDef def,
         SimulationManager.SimulationSnapshot snapshot,
-        bool hasSnapshot,
-        out float maxPortPressure,
-        out float maxSourcePressure)
+        bool hasSnapshot)
     {
-        maxPortPressure = 0f;
-        maxSourcePressure = 0f;
-
-        if (!hasSnapshot || component?.portDef?.ports == null || component.portDef.ports.Length == 0)
+        if (component != null && hasSnapshot)
         {
-            return;
-        }
-
-        var ports = component.portDef.ports;
-        for (int i = 0; i < ports.Length; i++)
-        {
-            var port = ports[i];
-            if (port.portType != PortType.Water)
+            if (snapshot.TryGetComponentFill(component.GetInstanceID(), out var fillFromId))
             {
-                continue;
+                return fillFromId;
             }
 
-            Vector2Int globalPortCell = component.GetGlobalCell(port);
-            if (snapshot.TryGetPortHydraulicState(globalPortCell, out HydraulicSystem.PortHydraulicState state))
+            if (snapshot.TryGetComponentFill(component.anchorCell, out var fillFromAnchor))
             {
-                maxPortPressure = Mathf.Max(maxPortPressure, state.Pressure_Pa);
-                if (state.SourcePressure_Pa > 0f)
-                {
-                    maxSourcePressure = Mathf.Max(maxSourcePressure, state.SourcePressure_Pa);
-                }
+                return fillFromAnchor;
             }
         }
+
+        if (component != null)
+        {
+            return component.WaterFillPercent;
+        }
+
+        return def != null ? MachineComponent.NormalizeFill01(def.fillLevel) * 100f : 0f;
     }
 
     private static void AppendWaterPortHydraulicStates(

@@ -34,6 +34,7 @@ namespace MachineRepair {
 
         [Header("Simulation State")]
         [SerializeField] private bool isPowered;
+        [SerializeField, Range(0f, 100f)] private float waterFillPercent;
 
         [Header("Connections")]
         [SerializeField] private List<MachineComponent> powerConnections = new();
@@ -45,6 +46,8 @@ namespace MachineRepair {
         public IReadOnlyList<MachineComponent> SignalConnections => signalConnections;
 
         public bool IsPowered => isPowered;
+        public float WaterFillPercent => waterFillPercent;
+        public float WaterFill01 => waterFillPercent / 100f;
 
         public Vector2Int GetGlobalCell(Vector2Int localCell)
         {
@@ -60,6 +63,27 @@ namespace MachineRepair {
         public void SetPowered(bool powered)
         {
             isPowered = powered;
+        }
+
+        public void SetWaterFillPercent(float percent)
+        {
+            waterFillPercent = Mathf.Clamp(percent, 0f, 100f);
+        }
+
+        public void SeedWaterFillFromDef()
+        {
+            float initialFill = def != null ? NormalizeFill01(def.fillLevel) * 100f : 0f;
+            SetWaterFillPercent(initialFill);
+        }
+
+        public static float NormalizeFill01(float rawFill)
+        {
+            if (rawFill > 1f)
+            {
+                return Mathf.Clamp(rawFill / 100f, 0f, 1f);
+            }
+
+            return Mathf.Clamp01(rawFill);
         }
 
         public void RegisterConnection(PortType portType, MachineComponent other)

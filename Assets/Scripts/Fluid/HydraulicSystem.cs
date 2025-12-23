@@ -34,6 +34,19 @@ namespace MachineRepair.Fluid
             public float FillPercent => Fill01 * 100f;
         }
 
+        public struct ComponentRuntimeState
+        {
+            public int ComponentId;
+            public Vector2Int AnchorCell;
+            public float Volume_m3;
+            public float Fill01;
+            public float NetFlowIn_m3s;
+            public float RepresentativePressure_Pa;
+
+            public float FillPercent => Fill01 * 100f;
+            public float CurrentVolume_m3 => Volume_m3 * Fill01;
+        }
+
         private sealed class HydraulicSubgraph
         {
             public readonly List<int> NodeIndices = new();
@@ -77,6 +90,13 @@ namespace MachineRepair.Fluid
         private readonly List<HydraulicEdgeBinding> pipeBindings = new();
         private readonly Dictionary<PlacedPipe, PipeRuntimeState> pipeRuntimeStateByPipe = new();
         private readonly Dictionary<int, PipeRuntimeState> pipeRuntimeStateById = new();
+        private readonly Dictionary<MachineComponent, ComponentRuntimeState> componentRuntimeStateByComponent = new();
+        private readonly Dictionary<int, ComponentRuntimeState> componentRuntimeStateById = new();
+        private readonly Dictionary<Vector2Int, ComponentRuntimeState> componentRuntimeStateByCell = new();
+        private readonly Dictionary<MachineComponent, float> componentNetFlow = new();
+        private readonly Dictionary<MachineComponent, float> componentPressure = new();
+        private readonly HashSet<MachineComponent> activeWaterComponents = new();
+        private readonly List<MachineComponent> componentRemovalBuffer = new();
         private readonly List<SimulationManager.WaterFlowArrow> arrowBuffer = new();
 
         private float[] pressureField = Array.Empty<float>();
@@ -89,6 +109,7 @@ namespace MachineRepair.Fluid
         private const double DefaultRoughness_m = 1e-5d;
         private const double DefaultDensity_kgm3 = 998d;
         private const double DefaultViscosity_Pa_s = 1.002e-3d;
+        private const float LitersToCubicMeters = 0.001f;
 
         public HydraulicSystem(GridManager grid, HydraulicSolverSettings? overrideSettings = null)
         {
@@ -107,6 +128,8 @@ namespace MachineRepair.Fluid
         public IReadOnlyDictionary<Vector2Int, float> PipeDeltaPByCell => pipeDeltaPByCell;
         public IReadOnlyDictionary<PlacedPipe, PipeRuntimeState> PipeRuntimeStates => pipeRuntimeStateByPipe;
         public IReadOnlyDictionary<int, PipeRuntimeState> PipeRuntimeStatesById => pipeRuntimeStateById;
+        public IReadOnlyDictionary<int, ComponentRuntimeState> ComponentRuntimeStatesById => componentRuntimeStateById;
+        public IReadOnlyDictionary<Vector2Int, ComponentRuntimeState> ComponentRuntimeStatesByCell => componentRuntimeStateByCell;
         public float[] PressureField => pressureField;
         public float[] FlowField => flowField;
         public IReadOnlyList<SimulationManager.WaterFlowArrow> FlowArrows => arrowBuffer;
@@ -169,6 +192,7 @@ namespace MachineRepair.Fluid
 
             StampFields();
             BuildPortStates();
+            UpdateComponentRuntimeStates();
             BuildFlowArrows();
 
             return new HydraulicSolveResult
@@ -195,6 +219,7 @@ namespace MachineRepair.Fluid
             pipeBindings.Clear();
 
             BuildNodes();
+            PruneComponentRuntimeStates();
             BuildEdges();
             BuildSubgraphs();
         }
@@ -202,6 +227,8 @@ namespace MachineRepair.Fluid
         private void BuildNodes()
         {
             if (grid == null) return;
+
+            activeWaterComponents.Clear();
 
             for (int y = 0; y < grid.height; y++)
             {
@@ -212,6 +239,8 @@ namespace MachineRepair.Fluid
                     if (component == null || component.portDef == null) continue;
                     if (component.portDef.ports == null || component.portDef.ports.Length == 0) continue;
                     if (component.def == null || !component.def.water) continue;
+
+                    activeWaterComponents.Add(component);
 
                     for (int i = 0; i < component.portDef.ports.Length; i++)
                     {
@@ -535,6 +564,8 @@ namespace MachineRepair.Fluid
             pipeDeltaPByCell.Clear();
             arrowBuffer.Clear();
             pipeRuntimeStateById.Clear();
+            componentRuntimeStateById.Clear();
+            componentRuntimeStateByCell.Clear();
             ResetPipeRuntimeSamples();
         }
 
@@ -744,6 +775,150 @@ namespace MachineRepair.Fluid
             }
         }
 
+        private void UpdateComponentRuntimeStates()
+        {
+            componentRuntimeStateById.Clear();
+            componentRuntimeStateByCell.Clear();
+            componentNetFlow.Clear();
+            componentPressure.Clear();
+
+            if (grid == null) return;
+
+            foreach (var kvp in portsByNode)
+            {
+                int nodeIndex = kvp.Key;
+                if (nodeIndex < 0 || nodeIndex >= nodes.Count) continue;
+                var node = nodes[nodeIndex];
+
+                for (int i = 0; i < kvp.Value.Count; i++)
+                {
+                    var portRef = kvp.Value[i];
+                    var component = portRef.Component;
+                    if (component == null || component.def == null || !component.def.water) continue;
+
+                    float netFlow = 0f;
+                    if (portFlowByCell.TryGetValue(node.Cell, out var accumulator))
+                    {
+                        netFlow = accumulator.Net;
+                    }
+
+                    if (componentNetFlow.TryGetValue(component, out var existingFlow))
+                    {
+                        componentNetFlow[component] = existingFlow + netFlow;
+                    }
+                    else
+                    {
+                        componentNetFlow[component] = netFlow;
+                    }
+
+                    float pressure = 0f;
+                    if (portPressureByCell.TryGetValue(node.Cell, out var portPressure))
+                    {
+                        pressure = portPressure;
+                    }
+
+                    if (componentPressure.TryGetValue(component, out var existingPressure))
+                    {
+                        componentPressure[component] = Math.Max(existingPressure, pressure);
+                    }
+                    else
+                    {
+                        componentPressure[component] = pressure;
+                    }
+                }
+            }
+
+            foreach (var kvp in componentNetFlow)
+            {
+                var component = kvp.Key;
+                float netFlow = kvp.Value;
+                var state = GetOrCreateComponentRuntimeState(component);
+                state.Volume_m3 = ResolveComponentVolume_m3(component);
+
+                float capacity_m3 = state.Volume_m3;
+                double currentVolume = Math.Max(0d, capacity_m3 * state.Fill01);
+                double nextVolume = currentVolume - (double)netFlow * stepDuration;
+
+                if (capacity_m3 > 0d)
+                {
+                    nextVolume = Math.Min(capacity_m3, Math.Max(0d, nextVolume));
+                    state.Fill01 = (float)(nextVolume / capacity_m3);
+                }
+                else
+                {
+                    state.Fill01 = 0f;
+                }
+
+                state.AnchorCell = component != null ? component.anchorCell : state.AnchorCell;
+                state.ComponentId = component != null ? component.GetInstanceID() : state.ComponentId;
+                state.NetFlowIn_m3s = -netFlow;
+                state.RepresentativePressure_Pa = componentPressure.TryGetValue(component, out var portPressure) ? portPressure : 0f;
+
+                CommitComponentRuntimeState(component, state);
+            }
+        }
+
+        private ComponentRuntimeState GetOrCreateComponentRuntimeState(MachineComponent component)
+        {
+            if (component != null && componentRuntimeStateByComponent.TryGetValue(component, out var state))
+            {
+                return state;
+            }
+
+            float capacity_m3 = ResolveComponentVolume_m3(component);
+            float seedFill = ResolveSeedFill01(component);
+
+            state = new ComponentRuntimeState
+            {
+                ComponentId = component != null ? component.GetInstanceID() : 0,
+                AnchorCell = component != null ? component.anchorCell : default,
+                Volume_m3 = capacity_m3,
+                Fill01 = seedFill,
+                NetFlowIn_m3s = 0f,
+                RepresentativePressure_Pa = 0f
+            };
+
+            if (component != null)
+            {
+                componentRuntimeStateByComponent[component] = state;
+            }
+
+            return state;
+        }
+
+        private float ResolveSeedFill01(MachineComponent component)
+        {
+            if (component == null || component.def == null || !component.def.water)
+                return 0f;
+
+            float seeded = Mathf.Clamp01(component.WaterFill01);
+            if (seeded <= 0f)
+            {
+                seeded = MachineComponent.NormalizeFill01(component.def.fillLevel);
+            }
+
+            return seeded;
+        }
+
+        private float ResolveComponentVolume_m3(MachineComponent component)
+        {
+            if (component == null || component.def == null || !component.def.water)
+                return 0f;
+
+            float volumeLiters = Mathf.Max(0f, component.def.volume); // ThingDef volume is authored in liters.
+            return volumeLiters * LitersToCubicMeters;
+        }
+
+        private void CommitComponentRuntimeState(MachineComponent component, ComponentRuntimeState state)
+        {
+            if (component == null) return;
+
+            componentRuntimeStateByComponent[component] = state;
+            componentRuntimeStateById[state.ComponentId] = state;
+            componentRuntimeStateByCell[state.AnchorCell] = state;
+            component.SetWaterFillPercent(state.FillPercent);
+        }
+
         private void BuildFlowArrows()
         {
             arrowBuffer.Clear();
@@ -905,11 +1080,51 @@ namespace MachineRepair.Fluid
             }
         }
 
+        private void PruneComponentRuntimeStates()
+        {
+            componentRemovalBuffer.Clear();
+
+            foreach (var kvp in componentRuntimeStateByComponent)
+            {
+                var component = kvp.Key;
+                if (component == null || !activeWaterComponents.Contains(component) || !IsComponentAnchored(component))
+                {
+                    componentRemovalBuffer.Add(component);
+                }
+            }
+
+            for (int i = 0; i < componentRemovalBuffer.Count; i++)
+            {
+                var component = componentRemovalBuffer[i];
+                if (component == null)
+                {
+                    componentRuntimeStateByComponent.Remove(component);
+                    continue;
+                }
+
+                componentRuntimeStateByComponent.Remove(component);
+                componentRuntimeStateById.Remove(component.GetInstanceID());
+                componentRuntimeStateByCell.Remove(component.anchorCell);
+            }
+
+            componentRemovalBuffer.Clear();
+        }
+
         private static bool IsHydraulicSupply(MachineComponent component)
         {
             return component != null
                    && component.def != null
                    && component.def.componentType == ComponentType.ChassisWaterConnection;
+        }
+
+        private bool IsComponentAnchored(MachineComponent component)
+        {
+            if (grid == null || component == null) return false;
+
+            var anchor = component.anchorCell;
+            if (!grid.InBounds(anchor.x, anchor.y)) return false;
+
+            return grid.TryGetCell(anchor, out var cell) && cell.component == component;
         }
 
         private static double ResolveSourcePressure(MachineComponent component)
@@ -966,6 +1181,8 @@ namespace MachineRepair.Fluid
         {
             private float net;
             private float dominantContribution;
+
+            public float Net => net;
 
             public void Add(float contribution)
             {
