@@ -43,6 +43,8 @@ namespace MachineRepair
         private readonly Dictionary<Vector2Int, bool> hydraulicSources = new();
         private readonly Dictionary<Vector2Int, float> hydraulicPipeDeltaP = new();
         private readonly Dictionary<int, HydraulicSystem.PipeRuntimeState> hydraulicPipeStatesById = new();
+        private readonly Dictionary<int, HydraulicSystem.ComponentRuntimeState> componentFillStatesById = new();
+        private readonly Dictionary<Vector2Int, HydraulicSystem.ComponentRuntimeState> componentFillStatesByCell = new();
 
         private readonly List<string> faultLog = new();
         private readonly HashSet<MachineComponent> componentsMissingReturn = new();
@@ -807,6 +809,8 @@ namespace MachineRepair
             hydraulicSources.Clear();
             hydraulicPipeDeltaP.Clear();
             hydraulicPipeStatesById.Clear();
+            componentFillStatesById.Clear();
+            componentFillStatesByCell.Clear();
 
             if (hydraulicSystem == null && grid != null)
             {
@@ -841,6 +845,14 @@ namespace MachineRepair
             foreach (var kvp in hydraulicSystem.PipeRuntimeStatesById)
             {
                 hydraulicPipeStatesById[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in hydraulicSystem.ComponentRuntimeStatesById)
+            {
+                componentFillStatesById[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in hydraulicSystem.ComponentRuntimeStatesByCell)
+            {
+                componentFillStatesByCell[kvp.Key] = kvp.Value;
             }
 
             if (hydraulicSystem.FlowArrows != null)
@@ -993,7 +1005,9 @@ namespace MachineRepair
                 PortHydraulic = new Dictionary<Vector2Int, HydraulicSystem.PortHydraulicState>(hydraulicPortStates),
                 HydraulicSources = new Dictionary<Vector2Int, bool>(hydraulicSources),
                 PipeDeltaPByCell = new Dictionary<Vector2Int, float>(hydraulicPipeDeltaP),
-                PipeRuntimeStates = new Dictionary<int, HydraulicSystem.PipeRuntimeState>(hydraulicPipeStatesById)
+                PipeRuntimeStates = new Dictionary<int, HydraulicSystem.PipeRuntimeState>(hydraulicPipeStatesById),
+                ComponentFillStatesById = new Dictionary<int, HydraulicSystem.ComponentRuntimeState>(componentFillStatesById),
+                ComponentFillStatesByCell = new Dictionary<Vector2Int, HydraulicSystem.ComponentRuntimeState>(componentFillStatesByCell)
             };
 
             SimulationStepCompleted?.Invoke();
@@ -1134,6 +1148,8 @@ namespace MachineRepair
             public IReadOnlyDictionary<Vector2Int, bool> HydraulicSources;
             public IReadOnlyDictionary<Vector2Int, float> PipeDeltaPByCell;
             public IReadOnlyDictionary<int, HydraulicSystem.PipeRuntimeState> PipeRuntimeStates;
+            public IReadOnlyDictionary<int, HydraulicSystem.ComponentRuntimeState> ComponentFillStatesById;
+            public IReadOnlyDictionary<Vector2Int, HydraulicSystem.ComponentRuntimeState> ComponentFillStatesByCell;
 
             public bool TryGetPortElectricalState(Vector2Int portCell, out PortElectricalState state)
             {
@@ -1192,6 +1208,32 @@ namespace MachineRepair
                 }
 
                 state = default;
+                return false;
+            }
+
+            public bool TryGetComponentFill(int componentId, out float fillPercent)
+            {
+                if (ComponentFillStatesById != null
+                    && ComponentFillStatesById.TryGetValue(componentId, out var state))
+                {
+                    fillPercent = state.FillPercent;
+                    return true;
+                }
+
+                fillPercent = default;
+                return false;
+            }
+
+            public bool TryGetComponentFill(Vector2Int anchorCell, out float fillPercent)
+            {
+                if (ComponentFillStatesByCell != null
+                    && ComponentFillStatesByCell.TryGetValue(anchorCell, out var state))
+                {
+                    fillPercent = state.FillPercent;
+                    return true;
+                }
+
+                fillPercent = default;
                 return false;
             }
         }

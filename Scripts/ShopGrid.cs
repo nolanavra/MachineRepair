@@ -573,6 +573,7 @@ namespace MachineRepair.Grid
             machine.rotation = rotationSteps;
             machine.anchorCell = anchorCell;
             machine.portDef = def.footprintMask.connectedPorts;
+            machine.SeedWaterFillFromDef();
 
             instance.transform.position = worldPosition;
             instance.transform.rotation = Quaternion.Euler(0f, 0f, -90f * rotationSteps);
