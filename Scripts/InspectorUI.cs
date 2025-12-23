@@ -173,7 +173,7 @@ public class InspectorUI : MonoBehaviour
 
         SetTitle(displayName);
         SetDescription("Transports water between connected components.");
-        SetConnections(BuildConnectionSummary(selection.cell));
+        SetConnections(BuildPipeConnectionSummary(pipe));
         SetParameters(BuildPipeParameters(selection, pipe));
         PresentSwitchSection(null);
     }
@@ -473,6 +473,23 @@ public class InspectorUI : MonoBehaviour
         return $"{typeLabel} connection: {startLabel} to {endLabel}.";
     }
 
+    private string BuildPipeConnectionSummary(PlacedPipe pipe)
+    {
+        if (pipe == null)
+            return "Pipe data unavailable.";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Connections:");
+
+        string startName = ResolveComponentName(pipe.startComponent, "(missing)");
+        string endName = ResolveComponentName(pipe.endComponent, "(missing)");
+
+        sb.AppendLine($"- Start: {startName} @ {FormatCell(pipe.startPortCell)}");
+        sb.AppendLine($"- End: {endName} @ {FormatCell(pipe.endPortCell)}");
+
+        return sb.ToString();
+    }
+
     private string BuildWireParameters(cellDef cell, int wireIndex)
     {
         var wire = cell.GetWireAt(wireIndex);
@@ -550,10 +567,10 @@ public class InspectorUI : MonoBehaviour
         return sb.ToString();
     }
 
-    private string ResolveComponentName(MachineComponent component)
+    private string ResolveComponentName(MachineComponent component, string missingLabel = "Component")
     {
         if (component == null)
-            return "Component";
+            return missingLabel;
 
         var def = ResolveComponentDef(component);
         if (!string.IsNullOrEmpty(def?.displayName))
@@ -561,6 +578,11 @@ public class InspectorUI : MonoBehaviour
 
         string fallbackName = component.name;
         return string.IsNullOrEmpty(fallbackName) ? "Component" : fallbackName;
+    }
+
+    private static string FormatCell(Vector2Int cell)
+    {
+        return $"({cell.x}, {cell.y})";
     }
 
     private void OnWireConnectionRegistered(WirePlacementTool.WireConnectionInfo obj)
