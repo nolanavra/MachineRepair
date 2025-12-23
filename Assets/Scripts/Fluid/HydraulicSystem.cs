@@ -647,7 +647,6 @@ namespace MachineRepair.Fluid
             if (binding == null) return;
 
             double flow = edge.Flow_m3s;
-            double deltaP = Math.Abs(edge.LastDeltaP_Pa);
             bool forward = flow >= 0d;
             var inletNode = forward ? nodeA : nodeB;
             var outletNode = forward ? nodeB : nodeA;
@@ -656,11 +655,8 @@ namespace MachineRepair.Fluid
             Vector2Int outletCell = forward ? binding.EndCell : binding.StartCell;
 
             double inletPressure = Math.Max(0d, inletNode.Pressure_Pa);
-            double outletPressure = Math.Max(0d, inletPressure - deltaP);
-            if (Math.Abs(flow) <= 1e-9d)
-            {
-                outletPressure = Math.Max(0d, outletNode.Pressure_Pa);
-            }
+            double directionalDeltaP = forward ? edge.LastDeltaP_Pa : -edge.LastDeltaP_Pa;
+            double outletPressure = Math.Max(0d, inletPressure - Math.Abs(directionalDeltaP));
 
             UpdatePortPressure(inletCell, (float)inletPressure);
             UpdatePortPressure(outletCell, (float)outletPressure);
@@ -680,7 +676,7 @@ namespace MachineRepair.Fluid
 
             if (portPressureByCell.TryGetValue(cell, out var existing))
             {
-                portPressureByCell[cell] = Math.Min(existing, pressure);
+                portPressureByCell[cell] = Math.Max(existing, pressure);
             }
             else
             {

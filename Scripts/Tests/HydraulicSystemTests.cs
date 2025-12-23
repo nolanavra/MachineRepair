@@ -267,6 +267,97 @@ namespace MachineRepair.Tests
             Assert.That(downstreamState.Pressure_Pa, Is.EqualTo(expectedDownstreamPressure).Within(5f), "Downstream port pressure should reflect edge ΔP.");
         }
 
+        [Test]
+        public void HydraulicSystem_PreservesIntermediatePressureAcrossChainedPipes()
+        {
+            var grid = CreateTestGrid();
+            var source = CreateWaterComponent(grid, new Vector2Int(0, 0), maxPressure: 250_000f);
+            var intermediate = CreateWaterComponent(grid, new Vector2Int(1, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var sink = CreateWaterComponent(grid, new Vector2Int(2, 0), maxPressure: 0f, componentType: ComponentType.Boiler);
+            var pipeDef = CreatePipeDef(maxFlow: 0.05f, diameter: 0.0035f);
+
+            var firstPipe = CreatePipeRun(grid, source, intermediate, new List<Vector2Int>
+            {
+                source.component.GetGlobalCell(source.port),
+                intermediate.component.GetGlobalCell(intermediate.port)
+            }, pipeDef);
+
+            var secondPipe = CreatePipeRun(grid, intermediate, sink, new List<Vector2Int>
+            {
+                intermediate.component.GetGlobalCell(intermediate.port),
+                sink.component.GetGlobalCell(sink.port)
+            }, pipeDef);
+
+            var system = new HydraulicSystem(grid);
+            system.SetWaterEnabled(true);
+            system.SetStepDuration(0.5f);
+            system.Solve();
+
+            Assert.That(system.Edges.Count, Is.EqualTo(2), "Two pipe edges should be registered.");
+
+            var firstEdge = FindEdgeForPipe(system, firstPipe);
+            bool forward = firstEdge.Flow_m3s >= 0d;
+
+            var upstreamCell = forward ? firstPipe.startPortCell : firstPipe.endPortCell;
+            var downstreamCell = forward ? firstPipe.endPortCell : firstPipe.startPortCell;
+
+            Assert.That(system.PortStates.ContainsKey(upstreamCell), "Upstream port should report a hydraulic state.");
+            Assert.That(system.PortStates.ContainsKey(downstreamCell), "Downstream port should report a hydraulic state.");
+
+            var upstreamState = system.PortStates[upstreamCell];
+            var downstreamState = system.PortStates[downstreamCell];
+            float directionalDeltaP = forward ? (float)firstEdge.LastDeltaP_Pa : (float)(-firstEdge.LastDeltaP_Pa);
+            float expectedDownstreamPressure = Mathf.Max(0f, upstreamState.Pressure_Pa - Mathf.Abs(directionalDeltaP));
+
+            Assert.That(system.SourceByCell.ContainsKey(downstreamCell), "Downstream cell should track source membership.");
+            Assert.IsFalse(system.SourceByCell[downstreamCell], "Intermediate node should not be treated as a source.");
+            Assert.That(downstreamState.Pressure_Pa, Is.EqualTo(expectedDownstreamPressure).Within(5f), "Downstream pressure should carry the upstream absolute pressure minus the edge drop.");
+
+            var secondEdge = FindEdgeForPipe(system, secondPipe);
+            bool secondForward = secondEdge.Flow_m3s >= 0d;
+            var secondUpstreamCell = secondForward ? secondPipe.startPortCell : secondPipe.endPortCell;
+            var secondDownstreamCell = secondForward ? secondPipe.endPortCell : secondPipe.startPortCell;
+            Assert.That(system.PortStates.ContainsKey(secondUpstreamCell), "Second edge upstream port should report a hydraulic state.");
+            Assert.That(system.PortStates.ContainsKey(secondDownstreamCell), "Second edge downstream port should report a hydraulic state.");
+            var intermediateState = system.PortStates[secondUpstreamCell];
+            var sinkState = system.PortStates[secondDownstreamCell];
+
+            float secondDirectionalDeltaP = secondForward ? (float)secondEdge.LastDeltaP_Pa : (float)(-secondEdge.LastDeltaP_Pa);
+            float expectedSinkPressure = Mathf.Max(0f, intermediateState.Pressure_Pa - Mathf.Abs(secondDirectionalDeltaP));
+
+            Assert.That(sinkState.Pressure_Pa, Is.EqualTo(expectedSinkPressure).Within(5f), "Terminal sink pressure should reflect the upstream pressure minus the second edge drop.");
+        }
+
+        private HydraulicEdge FindEdgeForPipe(HydraulicSystem system, PlacedPipe pipe)
+        {
+            Assert.NotNull(system, "Hydraulic system should be available.");
+            Assert.NotNull(pipe, "Pipe should exist for edge lookup.");
+
+            foreach (var edge in system.Edges)
+            {
+                if (edge.Tag == null) continue;
+
+                var tagType = edge.Tag.GetType();
+                var startCellField = tagType.GetField("StartCell", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                var endCellField = tagType.GetField("EndCell", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+                if (startCellField == null || endCellField == null) continue;
+
+                var startCell = (Vector2Int)startCellField.GetValue(edge.Tag);
+                var endCell = (Vector2Int)endCellField.GetValue(edge.Tag);
+
+                bool matchesForward = startCell == pipe.startPortCell && endCell == pipe.endPortCell;
+                bool matchesBackward = startCell == pipe.endPortCell && endCell == pipe.startPortCell;
+
+                if (matchesForward || matchesBackward)
+                {
+                    return edge;
+                }
+            }
+
+            Assert.Fail("No hydraulic edge found for the provided pipe.");
+            return default;
+        }
+
         private GridManager CreateTestGrid()
         {
             var go = new GameObject("GridManager");
