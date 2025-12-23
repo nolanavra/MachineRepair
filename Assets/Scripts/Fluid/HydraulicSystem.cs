@@ -851,20 +851,31 @@ namespace MachineRepair.Fluid
                 var component = kvp.Key;
                 float netFlow = kvp.Value;
                 var state = GetOrCreateComponentRuntimeState(component);
+                bool chassisWaterSource = component != null
+                    && component.def != null
+                    && component.def.componentType == ComponentType.ChassisWaterConnection;
+
                 state.Volume_m3 = ResolveComponentVolume_m3(component);
 
-                float capacity_m3 = state.Volume_m3;
-                double currentVolume = Math.Max(0d, capacity_m3 * state.Fill01);
-                double nextVolume = currentVolume - (double)netFlow * stepDuration;
-
-                if (capacity_m3 > 0d)
+                if (chassisWaterSource)
                 {
-                    nextVolume = Math.Min(capacity_m3, Math.Max(0d, nextVolume));
-                    state.Fill01 = (float)(nextVolume / capacity_m3);
+                    state.Fill01 = 1f;
                 }
                 else
                 {
-                    state.Fill01 = 0f;
+                    float capacity_m3 = state.Volume_m3;
+                    double currentVolume = Math.Max(0d, capacity_m3 * state.Fill01);
+                    double nextVolume = currentVolume - (double)netFlow * stepDuration;
+
+                    if (capacity_m3 > 0d)
+                    {
+                        nextVolume = Math.Min(capacity_m3, Math.Max(0d, nextVolume));
+                        state.Fill01 = (float)(nextVolume / capacity_m3);
+                    }
+                    else
+                    {
+                        state.Fill01 = 0f;
+                    }
                 }
 
                 state.AnchorCell = component != null ? component.anchorCell : state.AnchorCell;
@@ -908,6 +919,9 @@ namespace MachineRepair.Fluid
         {
             if (component == null || component.def == null || !component.def.water)
                 return 0f;
+
+            if (component.def.componentType == ComponentType.ChassisWaterConnection)
+                return 1f;
 
             float seeded = Mathf.Clamp01(component.WaterFill01);
             if (seeded <= 0f)
