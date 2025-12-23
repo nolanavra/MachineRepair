@@ -64,6 +64,8 @@ namespace MachineRepair.Fluid
             public Vector3[] Path;
             public Vector3[] ReversePath;
             public float PathLength;
+            public double HydraulicLength_m;
+            public double HydraulicArea_m2;
             public double Volume_m3;
         }
 
@@ -345,7 +347,7 @@ namespace MachineRepair.Fluid
                 if (!nodeIndexByCell.TryGetValue(pipe.endPortCell, out var endIndex)) continue;
 
                 var binding = BuildPipeBinding(pipe);
-                var element = BuildPipeModel(pipe);
+                var element = BuildPipeModel(pipe, binding);
 
                 var edge = new HydraulicEdge
                 {
@@ -365,16 +367,20 @@ namespace MachineRepair.Fluid
 
         private HydraulicEdgeBinding BuildPipeBinding(PlacedPipe pipe)
         {
+            var geometry = ResolvePipeGeometry(pipe);
             var binding = new HydraulicEdgeBinding
             {
                 Pipe = pipe,
                 StartCell = pipe.startPortCell,
                 EndCell = pipe.endPortCell,
-                OccupiedCells = pipe.occupiedCells
+                OccupiedCells = pipe.occupiedCells,
+                HydraulicArea_m2 = geometry.Area_m2
             };
 
             if (grid == null)
             {
+                binding.HydraulicLength_m = 1d;
+                binding.Volume_m3 = Math.Max(0d, binding.HydraulicArea_m2 * binding.HydraulicLength_m);
                 return binding;
             }
 
@@ -392,8 +398,9 @@ namespace MachineRepair.Fluid
             }
 
             binding.Path = path.ToArray();
+            binding.HydraulicLength_m = CalculatePipeLength(pipe);
             binding.PathLength = pathLength;
-            binding.Volume_m3 = CalculatePipeVolume(pipe);
+            binding.Volume_m3 = Math.Max(0d, binding.HydraulicArea_m2 * binding.HydraulicLength_m);
 
             path.Reverse();
             binding.ReversePath = path.ToArray();
@@ -401,10 +408,14 @@ namespace MachineRepair.Fluid
             return binding;
         }
 
-        private PipeElementModel BuildPipeModel(PlacedPipe pipe)
+        private PipeElementModel BuildPipeModel(PlacedPipe pipe, HydraulicEdgeBinding binding)
         {
-            double length = CalculatePipeLength(pipe);
-            double diameter = ResolvePipeDiameter(pipe);
+            double length = binding != null && binding.HydraulicLength_m > 0d
+                ? binding.HydraulicLength_m
+                : CalculatePipeLength(pipe);
+
+            var geometry = ResolvePipeGeometry(pipe);
+            double diameter = geometry.Diameter_m;
             double roughness = DefaultRoughness_m;
             double density = DefaultDensity_kgm3;
             double viscosity = DefaultViscosity_Pa_s;
@@ -413,7 +424,6 @@ namespace MachineRepair.Fluid
 
             if (pipe.pipeDef != null)
             {
-                diameter = Math.Max(DefaultDiameter_m, pipe.pipeDef.innerDiameter_m);
                 roughness = Math.Max(0d, pipe.pipeDef.roughness_m);
                 density = Math.Max(DefaultDensity_kgm3, pipe.pipeDef.fluidDensity_kgm3);
                 viscosity = Math.Max(DefaultViscosity_Pa_s, pipe.pipeDef.fluidViscosity_PaS);
@@ -699,11 +709,15 @@ namespace MachineRepair.Fluid
                 {
                     StartCell = binding.StartCell,
                     EndCell = binding.EndCell,
+                    // Seed from serialized percentage, but runtime volumes will be geometry-driven.
                     Fill01 = Mathf.Clamp01(pipe.fillLevel / 100f)
                 };
             }
 
-            double volume = binding.Volume_m3 > 0d ? binding.Volume_m3 : CalculatePipeVolume(pipe);
+            double hydraulicLength = binding.HydraulicLength_m > 0d ? binding.HydraulicLength_m : CalculatePipeLength(pipe);
+            double hydraulicArea = binding.HydraulicArea_m2 > 0d ? binding.HydraulicArea_m2 : ResolvePipeGeometry(pipe).Area_m2;
+            double volume = binding.Volume_m3 > 0d ? binding.Volume_m3 : hydraulicArea * hydraulicLength;
+            volume = Math.Max(0d, volume);
             state.Volume_m3 = (float)volume;
             state.StartCell = binding.StartCell;
             state.EndCell = binding.EndCell;
@@ -716,6 +730,7 @@ namespace MachineRepair.Fluid
             if (nextVolume < 0d) nextVolume = 0d;
             if (nextVolume > volume) nextVolume = volume;
 
+            // Fill remains geometry-driven so seeded percentages are re-normalized against the cached hydraulic capacity.
             state.Fill01 = volume > 0d ? (float)(nextVolume / volume) : 0f;
             state.Flow_m3s = (float)flow_m3s;
             state.InletPressure_Pa = (float)inletPressure;
@@ -984,24 +999,25 @@ namespace MachineRepair.Fluid
             return Math.Max(1e-3d, length);
         }
 
-        private double CalculatePipeVolume(PlacedPipe pipe)
+        private PipeGeometry ResolvePipeGeometry(PlacedPipe pipe)
         {
-            double length = CalculatePipeLength(pipe);
-            double diameter = ResolvePipeDiameter(pipe);
-            double area = Math.PI * 0.25d * diameter * diameter;
-            double volume = area * length;
-            return Math.Max(0d, volume);
-        }
-
-        private double ResolvePipeDiameter(PlacedPipe pipe)
-        {
+            // Authoring precedence: explicit pipe definition wins, otherwise we fall back to default solver geometry.
             double diameter = DefaultDiameter_m;
+            double area = Math.PI * 0.25d * diameter * diameter;
+
             if (pipe != null && pipe.pipeDef != null)
             {
-                diameter = Math.Max(DefaultDiameter_m, pipe.pipeDef.innerDiameter_m);
+                double authoredDiameter = Math.Max(0d, pipe.pipeDef.innerDiameter_m);
+                if (authoredDiameter > 0d)
+                {
+                    diameter = Math.Max(DefaultDiameter_m, authoredDiameter);
+                    area = Math.PI * 0.25d * diameter * diameter;
+                }
+
+                // If a future PipeDef exposes an explicit inner area, prefer it over the derived diameter to keep intent clear.
             }
 
-            return diameter;
+            return new PipeGeometry(diameter, area);
         }
 
         private double[] ConvertMinorLosses(float[] minorLosses)
@@ -1201,6 +1217,18 @@ namespace MachineRepair.Fluid
                 }
 
                 return dominantContribution;
+            }
+        }
+
+        private readonly struct PipeGeometry
+        {
+            public readonly double Diameter_m;
+            public readonly double Area_m2;
+
+            public PipeGeometry(double diameter_m, double area_m2)
+            {
+                Diameter_m = diameter_m;
+                Area_m2 = area_m2;
             }
         }
 
