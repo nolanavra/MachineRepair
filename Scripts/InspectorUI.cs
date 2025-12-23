@@ -4,6 +4,7 @@ using MachineRepair;
 using MachineRepair.Fluid;
 using MachineRepair.Grid;
 using UnityEngine;
+using TMPro;
 using UnityEngine.UI;
 
 /// <summary>
@@ -20,16 +21,16 @@ public class InspectorUI : MonoBehaviour
     [SerializeField] private SimulationManager simulationManager;
 
     [Header("UI Elements")]
-    [SerializeField] private Text titleText;
-    [SerializeField] private Text descriptionText;
-    [SerializeField] private Text connectionsText;
-    [SerializeField] private Text parametersText;
+    [SerializeField] private TMP_Text titleText;
+    [SerializeField] private TMP_Text descriptionText;
+    [SerializeField] private TMP_Text connectionsText;
+    [SerializeField] private TMP_Text parametersText;
     [SerializeField] private GameObject panelRoot;
     [SerializeField] private CanvasGroup panelCanvasGroup;
     [SerializeField] private Button removeButton;
     [Header("Switch UI")]
     [SerializeField] private GameObject switchPanel;
-    [SerializeField] private Text switchStateText;
+    [SerializeField] private TMP_Text switchStateText;
     [SerializeField] private Button switchToggleButton;
 
     private InputRouter.SelectionInfo currentSelection;

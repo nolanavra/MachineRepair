@@ -427,15 +427,15 @@ public static class Editor_CreateDefaultScene
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    private static Text CreateText(Transform parent, string name, FontStyle style, int size)
+    private static TMP_Text CreateText(Transform parent, string name, FontStyle style, int size)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
-        var text = go.AddComponent<Text>();
-        text.fontStyle = style;
+        var text = go.AddComponent<TextMeshProUGUI>();
+        text.fontStyle = (FontStyles)style;
         text.fontSize = size;
         text.text = name;
-        text.alignment = TextAnchor.UpperLeft;
+        text.alignment = TextAlignmentOptions.TopLeft;
         return text;
     }
 
